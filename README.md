@@ -8,7 +8,7 @@
 
 Avaje Webview wraps native platform webview engines to provide a clean interface for building modern cross-platform GUIs.
 
-This is an enhanced fork of https://github.com/webview/webview_java
+This is an enhanced fork of https://github.com/webview/webview_java with some [major differences](#notable-changes-from-upstream)
 
 ## How to use
 
@@ -232,7 +232,8 @@ webview.run();
 - Add System.Logger use for resource cleanup (to ease debugging of resource cleanup)
 - Introduce WebviewBuilder, move native library bootstrap logic there
 - Builder pattern to replace constructors
-- More window functions
+- A lot More window functions
+- Mac window functions
 - Remove the dependency on co.casterlabs.commons:platform (local copy of necessary code only)
 - Remove the dependency on co.casterlabs.commons:io
 - Remove the dependency on Lombok and Jetbrains
