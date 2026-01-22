@@ -124,7 +124,7 @@ final class WebviewBuilder implements Builder {
       view.navigate("about:blank");
     }
     if (shutdownHook) {
-      Runtime.getRuntime().addShutdownHook(new Hook(view::close));
+      Runtime.getRuntime().addShutdownHook(new Hook(view::shutdown));
     }
     return view;
   }
