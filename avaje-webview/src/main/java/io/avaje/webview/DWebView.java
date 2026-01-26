@@ -20,16 +20,17 @@
  */
 package io.avaje.webview;
 
+import module java.base;
+import module org.jspecify;
+
 import static io.avaje.webview.platform.OSDistribution.MACOS;
 import static io.avaje.webview.platform.OSFamily.WINDOWS;
 import static io.avaje.webview.platform.Platform.OS_DISTRIBUTION;
 import static io.avaje.webview.platform.Platform.OS_FAMILY;
-import static java.lang.System.Logger.Level.DEBUG;
-import static java.lang.System.Logger.Level.ERROR;
+import static java.lang.System.Logger.Level.*;
 import static java.lang.foreign.FunctionDescriptor.ofVoid;
 import static java.lang.foreign.ValueLayout.ADDRESS;
-import module java.base;
-import module org.jspecify;
+import static java.util.Collections.synchronizedList;
 
 /**
  * Webview browser window.
@@ -51,27 +52,22 @@ import module org.jspecify;
 final class DWebView implements Webview {
 
   private static final System.Logger log = System.getLogger("io.avaje.webview");
-  private static final String MACOS_RELOAD =
-      "Reload the application with -XstartOnFirstThread to fix this.";
 
-  private static final String ERROR_MAC_NO_XSTART_ON_FIRST_THREAD =
-      "Process was not started with -XstartOnFirstThread. ";
+  private static final String
+      MACOS_RELOAD = "Reload the application with -XstartOnFirstThread to fix this.",
+      ERROR_MAC_NO_XSTART_ON_FIRST_THREAD = "Process was not started with -XstartOnFirstThread. ",
+      ERROR_MAC_NOT_MAIN_THREAD = "Cannot create webview on a non-main thread on MacOS.",
+      JSON_OK = "\"ok\"";
 
-  private static final String ERROR_MAC_NOT_MAIN_THREAD =
-      "Cannot create webview on a non-main thread on MacOS.";
-
-  private static final int WV_HINT_NONE = 0;
-  private static final int WV_HINT_MIN = 1;
-  private static final int WV_HINT_MAX = 2;
-  private static final int WV_HINT_FIXED = 3;
-  private static final FunctionDescriptor BIND_DESCRIPTOR = ofVoid(ADDRESS, ADDRESS);
-  private static final FunctionDescriptor DISPATCH_DESCRIPTOR = ofVoid();
+  private static final int WV_HINT_NONE = 0, WV_HINT_MIN = 1, WV_HINT_MAX = 2, WV_HINT_FIXED = 3;
+  private static final FunctionDescriptor BIND_DESCRIPTOR = ofVoid(ADDRESS, ADDRESS),
+      DISPATCH_DESCRIPTOR = ofVoid();
 
   private final Thread uiThread;
   private final MemorySegment webview;
 
   private final Arena arena = Arena.ofAuto();
-  private List<Runnable> evalList = Collections.synchronizedList(new ArrayList<>());
+  private final List<Runnable> evalList = synchronizedList(new ArrayList<>());
 
   private boolean running;
   private boolean closed;
@@ -81,20 +77,71 @@ final class DWebView implements Webview {
     checkEnvironment();
     uiThread = Thread.currentThread();
     webview =
-        WebviewNative.webview_create(debug, windowPointer == null ? MemorySegment.NULL : windowPointer);
+        WebviewNative.webview_create(
+            debug, windowPointer == null ? MemorySegment.NULL : windowPointer);
 
     this.setSize(width, height);
     if (OS_DISTRIBUTION == MACOS) {
       MacOSHelper.createMenus();
     }
+    this.redirectConsole();
   }
 
-  private void handleDispatch(Runnable task) {
-    if (uiThread == Thread.currentThread()) {
-      task.run();
-    } else {
-      dispatch(task);
-    }
+  /**
+   * Redirect {@code console.*} in the JavaScript context to delegate to {@link System.Logger} using
+   * {@link #log}, also continuing to log to the original JavaScript logger e.g. for developer tools
+   * if available.
+   */
+  private void redirectConsole() {
+    this.bind(
+        "__$io_avaje_webview$log__",
+        json -> {
+          int comma = json.indexOf(",");
+          if (comma == -1 || json.charAt(0) != '[') {
+            log.log(ERROR, "[Webview] " + json);
+            return JSON_OK;
+          }
+
+          String function = json.substring(2, comma - 1);
+          String contents = json.substring(comma + 1, json.length() - 1);
+          String message = "[Webview | console." + function + "] " + contents;
+
+          switch (function) {
+            case "log", "info" -> log.log(INFO, message);
+            case "warn" -> log.log(WARNING, message);
+            case "error" -> log.log(ERROR, message);
+            case "debug" -> log.log(DEBUG, message);
+            default -> log.log(TRACE, "[unknown console function] " + message);
+          }
+
+          return JSON_OK;
+        });
+
+    this.eval(
+        """
+    (function() {
+      const original = { ...console };
+
+      function log(name, ...parameters) {
+        __$io_avaje_webview$log__(name, ...parameters);
+        original[name](...parameters);
+      }
+
+      for (const [name, it] of Object.entries(console)) {
+        if (typeof it !== "function") continue;
+        console[name] = (...parameters) => log(name, ...parameters);
+      }
+
+      window.addEventListener("error", event => {
+          console.error(event.error);
+          return false;
+      });
+      window.addEventListener("unhandledrejection", event => {
+          console.error(event.reason);
+          return false;
+      });
+    })();
+    """);
   }
 
   @Override
@@ -104,18 +151,17 @@ final class DWebView implements Webview {
 
   @Override
   public void setHTML(@Nullable String html) {
-    handleDispatch(() -> WebviewNative.webview_set_html(webview, html));
+    dispatch(() -> WebviewNative.webview_set_html(webview, html));
   }
 
   @Override
   public void navigate(@Nullable String url) {
-    handleDispatch(
-        () -> WebviewNative.webview_navigate(webview, url == null ? "about:blank" : url));
+    dispatch(() -> WebviewNative.webview_navigate(webview, url == null ? "about:blank" : url));
   }
 
   @Override
   public void setTitle(@NonNull String title) {
-    handleDispatch(() -> WebviewNative.webview_set_title(webview, title));
+    dispatch(() -> WebviewNative.webview_set_title(webview, title));
     if (OS_DISTRIBUTION == MACOS) {
       MacOSHelper.setApplicationName(title);
     }
@@ -123,22 +169,22 @@ final class DWebView implements Webview {
 
   @Override
   public void setMinSize(int width, int height) {
-    handleDispatch(() -> WebviewNative.webview_set_size(webview, width, height, WV_HINT_MIN));
+    dispatch(() -> WebviewNative.webview_set_size(webview, width, height, WV_HINT_MIN));
   }
 
   @Override
   public void setMaxSize(int width, int height) {
-    handleDispatch(() -> WebviewNative.webview_set_size(webview, width, height, WV_HINT_MAX));
+    dispatch(() -> WebviewNative.webview_set_size(webview, width, height, WV_HINT_MAX));
   }
 
   @Override
   public void setSize(int width, int height) {
-    handleDispatch(() -> WebviewNative.webview_set_size(webview, width, height, WV_HINT_NONE));
+    dispatch(() -> WebviewNative.webview_set_size(webview, width, height, WV_HINT_NONE));
   }
 
   @Override
   public void setFixedSize(int width, int height) {
-    handleDispatch(() -> WebviewNative.webview_set_size(webview, width, height, WV_HINT_FIXED));
+    dispatch(() -> WebviewNative.webview_set_size(webview, width, height, WV_HINT_FIXED));
   }
 
   @Override
@@ -148,7 +194,7 @@ final class DWebView implements Webview {
 
   @Override
   public void setInitScript(@NonNull String script, boolean allowNestedAccess) {
-    handleDispatch(
+    dispatch(
         () -> {
           var script1 =
               String.format(
@@ -191,7 +237,7 @@ final class DWebView implements Webview {
 
   @Override
   public void bind(@NonNull String name, @NonNull WebviewBinding handler) {
-    handleDispatch(() -> bindCallback(name, handler));
+    dispatch(() -> bindCallback(name, handler));
   }
 
   private void bindCallback(String name, WebviewBinding handler) {
@@ -248,11 +294,15 @@ final class DWebView implements Webview {
 
   @Override
   public void unbind(@NonNull String name) {
-    handleDispatch(() -> WebviewNative.webview_unbind(webview, name));
+    dispatch(() -> WebviewNative.webview_unbind(webview, name));
   }
 
   @Override
   public void dispatch(@NonNull Runnable handler) {
+    if (uiThread == Thread.currentThread()) {
+      handler.run();
+      return;
+    }
 
     var callbackStub =
         Linker.nativeLinker()
@@ -295,7 +345,7 @@ final class DWebView implements Webview {
   @Override
   public void close() {
     log.log(DEBUG, "close");
-    handleDispatch(this::shutdown);
+    dispatch(this::shutdown);
   }
 
   void shutdown() {
