@@ -51,6 +51,12 @@ public class Main {
                     ctx.html(taskHtml);
                   }
                 })
+            // Complete Task
+            .post(
+                "/tasks/complete",
+                ctx -> {
+                  ctx.html("");
+                })
             .port(0) // random port
             .start();
 
