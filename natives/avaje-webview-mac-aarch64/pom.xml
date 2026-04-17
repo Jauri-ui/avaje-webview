@@ -5,7 +5,7 @@
   <parent>
     <groupId>io.avaje.webview</groupId>
     <artifactId>avaje-webview-parent</artifactId>
-    <version>0.17</version>
+    <version>0.18</version>
     <relativePath>../..</relativePath>
   </parent>
   <artifactId>avaje-webview-mac-aarch64</artifactId>
@@ -16,7 +16,7 @@
     <dependency>
       <groupId>io.avaje.webview</groupId>
       <artifactId>avaje-webview</artifactId>
-      <version>0.17</version>
+      <version>0.18</version>
     </dependency>
   </dependencies>
 </project>
