@@ -22,7 +22,7 @@
         <dependency>
             <groupId>io.avaje.webview</groupId>
             <artifactId>avaje-webview-platform</artifactId>
-            <version>0.18</version>
+            <version>0.19</version>
         </dependency>
         
         <dependency>
