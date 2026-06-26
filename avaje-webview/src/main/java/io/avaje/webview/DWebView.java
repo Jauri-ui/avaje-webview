@@ -336,6 +336,9 @@ final class DWebView implements Webview {
   }
 
   private void start() {
+    if (OS_FAMILY == WINDOWS) {
+      WindowsHelper.installCloseOnWindowX(this, arena);
+    }
     WebviewNative.webview_run(webview);
     log.log(DEBUG, "destroy and terminate");
     WebviewNative.webview_destroy(webview);

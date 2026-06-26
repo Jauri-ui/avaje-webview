@@ -32,6 +32,10 @@ final class WindowsHelper {
   private static final int IMAGE_ICON = 1;
   private static final int LR_LOADFROMFILE = 0x0010;
 
+  // Window close constants
+  private static final int WM_CLOSE = 0x0010;
+  private static final int GWLP_WNDPROC = -4;
+
   // Method handles
   private static final MethodHandle DwmSetWindowAttribute;
   private static final MethodHandle InvalidateRect;
@@ -44,6 +48,9 @@ final class WindowsHelper {
 
   private static final MethodHandle LoadImageW;
   private static final MethodHandle SendMessageW;
+  private static final MethodHandle GetWindowLongPtrW;
+  private static final MethodHandle SetWindowLongPtrW;
+  private static final MethodHandle CallWindowProcW;
 
   // RECT structure layout
   private static final StructLayout RECT_LAYOUT =
@@ -161,6 +168,39 @@ final class WindowsHelper {
                           FunctionDescriptor.of(JAVA_LONG, ADDRESS, JAVA_INT, JAVA_LONG, ADDRESS)))
               .orElseThrow();
 
+      // LONG_PTR GetWindowLongPtrW(HWND hWnd, int nIndex)
+      GetWindowLongPtrW =
+          USER32
+              .find("GetWindowLongPtrW")
+              .map(
+                  addr ->
+                      LINKER.downcallHandle(
+                          addr, FunctionDescriptor.of(JAVA_LONG, ADDRESS, JAVA_INT)))
+              .orElseThrow(() -> new UnsatisfiedLinkError("GetWindowLongPtrW not found"));
+
+      // LONG_PTR SetWindowLongPtrW(HWND hWnd, int nIndex, LONG_PTR dwNewLong)
+      SetWindowLongPtrW =
+          USER32
+              .find("SetWindowLongPtrW")
+              .map(
+                  addr ->
+                      LINKER.downcallHandle(
+                          addr, FunctionDescriptor.of(JAVA_LONG, ADDRESS, JAVA_INT, JAVA_LONG)))
+              .orElseThrow(() -> new UnsatisfiedLinkError("SetWindowLongPtrW not found"));
+
+      // LRESULT CallWindowProcW(WNDPROC lpPrevWndFunc, HWND hWnd, UINT Msg, WPARAM wParam, LPARAM
+      // lParam)
+      CallWindowProcW =
+          USER32
+              .find("CallWindowProcW")
+              .map(
+                  addr ->
+                      LINKER.downcallHandle(
+                          addr,
+                          FunctionDescriptor.of(
+                              JAVA_LONG, ADDRESS, ADDRESS, JAVA_INT, JAVA_LONG, JAVA_LONG)))
+              .orElseThrow(() -> new UnsatisfiedLinkError("CallWindowProcW not found"));
+
     } catch (Exception e) {
       throw new ExceptionInInitializerError(e);
     }
@@ -258,6 +298,65 @@ final class WindowsHelper {
       ShowWindow.invoke(webview.nativeWindowPointer(), SW_MAXIMIZE);
     } catch (Throwable e) {
       throw new RuntimeException("Failed to maximize window", e);
+    }
+  }
+
+  static void installCloseOnWindowX(Webview webview, Arena arena) {
+    try {
+      MemorySegment hwnd = webview.nativeWindowPointer();
+      long originalWndProc = (long) GetWindowLongPtrW.invoke(hwnd, GWLP_WNDPROC);
+      var hookStub =
+          LINKER.upcallStub(
+              createWindowProcHandle(webview, originalWndProc),
+              FunctionDescriptor.of(JAVA_LONG, ADDRESS, JAVA_INT, JAVA_LONG, JAVA_LONG),
+              arena);
+      SetWindowLongPtrW.invoke(hwnd, GWLP_WNDPROC, hookStub.address());
+    } catch (Throwable e) {
+      throw new RuntimeException("Failed to install window close hook", e);
+    }
+  }
+
+  private static MethodHandle createWindowProcHandle(Webview webview, long originalWndProc) {
+    try {
+      return MethodHandles.insertArguments(
+          MethodHandles.lookup()
+              .findStatic(
+                  WindowsHelper.class,
+                  "windowProcHook",
+                  MethodType.methodType(
+                      long.class,
+                      Webview.class,
+                      long.class,
+                      MemorySegment.class,
+                      int.class,
+                      long.class,
+                      long.class)),
+          0,
+          webview,
+          originalWndProc);
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to create window proc handle", e);
+    }
+  }
+
+  @SuppressWarnings("unused")
+  private static long windowProcHook(
+      Webview webview,
+      long originalWndProc,
+      MemorySegment hwnd,
+      int msg,
+      long wParam,
+      long lParam) {
+    if (msg == WM_CLOSE) {
+      webview.close();
+      return 0;
+    }
+    try {
+      return (long)
+          CallWindowProcW.invoke(
+              MemorySegment.ofAddress(originalWndProc), hwnd, msg, wParam, lParam);
+    } catch (Throwable e) {
+      return 0L;
     }
   }
 
