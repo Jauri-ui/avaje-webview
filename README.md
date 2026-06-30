@@ -18,7 +18,7 @@ This is an enhanced fork of https://github.com/webview/webview_java with some [m
 | Platform | Engine | Requirement |
 |----------|--------|-------------|
 | **Linux** | WebKitGTK 6.0 | `libgtk-4`, `libwebkitgtk-6.0`, `libjavascriptcoregtk-6.0` must be installed |
-| **macOS** | WKWebView | Built into macOS — no install needed |
+| **macOS** | WKWebView | Built into macOS |
 | **Windows** | WebView2 (Edge) | Microsoft Edge must be installed (pre-installed on Windows 10+) |
 
 Linux install example (Debian/Ubuntu):
