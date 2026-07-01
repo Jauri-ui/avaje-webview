@@ -509,8 +509,10 @@ final class Win32 {
       final var screenH = (int) GetSystemMetrics.invokeExact(SM_CYSCREEN);
       final var style = (int) GetWindowLong.invokeExact(hwnd, GWL_STYLE);
       final var _ = (int) SetWindowLong.invokeExact(hwnd, GWL_STYLE, style & ~WS_OVERLAPPEDWINDOW);
-      SetWindowPos.invokeExact(
-          hwnd, MemorySegment.NULL, 0, 0, screenW, screenH, SWP_NOZORDER | SWP_FRAMECHANGED);
+      final var _ =
+          (int)
+              SetWindowPos.invokeExact(
+                  hwnd, MemorySegment.NULL, 0, 0, screenW, screenH, SWP_NOZORDER | SWP_FRAMECHANGED);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }

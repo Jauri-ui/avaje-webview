@@ -18,7 +18,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 import io.avaje.webview.Webview;
@@ -109,7 +108,7 @@ public final class Win32WebView extends WebviewBase {
   private static final String POST_FN =
       "function(message){return window.chrome.webview.postMessage(message);}";
 
-  private static final AtomicInteger openWindows = new AtomicInteger(0);
+  private volatile boolean windowDestroyed;
 
   private final Arena arenaStubs = Arena.ofShared();
 
@@ -164,7 +163,6 @@ public final class Win32WebView extends WebviewBase {
   private MemorySegment cachedQI, cachedAddRef, cachedRelease;
 
   public Win32WebView(boolean debug, int width, int height) {
-    openWindows.incrementAndGet();
     Win32.coInitialize();
     buildWndProcStubs();
     createWindows(width, height);
@@ -173,7 +171,7 @@ public final class Win32WebView extends WebviewBase {
 
   @Override
   public void run() {
-    pumpLoop(() -> false);
+    pumpLoop(() -> windowDestroyed);
     arenaStubs.close();
   }
 
@@ -247,14 +245,16 @@ public final class Win32WebView extends WebviewBase {
           (int)
               Win32.SetWindowLong.invokeExact(
                   hwnd, Win32.GWL_STYLE, style & ~(Win32.WS_THICKFRAME | Win32.WS_MAXIMIZEBOX));
-      Win32.SetWindowPos.invokeExact(
-          hwnd,
-          MemorySegment.NULL,
-          0,
-          0,
-          width,
-          height,
-          Win32.SWP_NOZORDER | Win32.SWP_FRAMECHANGED);
+      final var _ =
+          (int)
+              Win32.SetWindowPos.invokeExact(
+                  hwnd,
+                  MemorySegment.NULL,
+                  0,
+                  0,
+                  width,
+                  height,
+                  Win32.SWP_NOZORDER | Win32.SWP_FRAMECHANGED);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
@@ -403,7 +403,7 @@ public final class Win32WebView extends WebviewBase {
   public long mainWndProc(MemorySegment hWnd, int msg, long wParam, long lParam) {
     switch (msg) {
       case Win32.WM_DESTROY -> {
-        if (openWindows.decrementAndGet() == 0) Win32.postQuitMessage(0);
+        windowDestroyed = true;
         return 0;
       }
       case Win32.WM_CLOSE -> {
@@ -747,11 +747,11 @@ public final class Win32WebView extends WebviewBase {
     resizeWidget(hwnd);
     try {
       final var _ = controller.putIsVisible(true);
-      Win32.ShowWindow.invokeExact(hwndWidget, Win32.SW_SHOW);
-      Win32.UpdateWindow.invokeExact(hwndWidget);
-      Win32.ShowWindow.invokeExact(hwnd, Win32.SW_SHOW);
-      Win32.UpdateWindow.invokeExact(hwnd);
-      Win32.SetFocus.invokeExact(hwnd);
+      final var _ = (int) Win32.ShowWindow.invokeExact(hwndWidget, Win32.SW_SHOW);
+      final var _ = (int) Win32.UpdateWindow.invokeExact(hwndWidget);
+      final var _ = (int) Win32.ShowWindow.invokeExact(hwnd, Win32.SW_SHOW);
+      final var _ = (int) Win32.UpdateWindow.invokeExact(hwnd);
+      final var _ = (MemorySegment) Win32.SetFocus.invokeExact(hwnd);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
@@ -975,7 +975,7 @@ public final class Win32WebView extends WebviewBase {
         final var r = (int) Win32.GetMessageW.invokeExact(msg, MemorySegment.NULL, 0, 0);
         if (r <= 0 || msg.get(JAVA_INT, 8) == Win32.WM_QUIT) break;
         final var _ = (int) Win32.TranslateMessage.invokeExact(msg);
-        Win32.DispatchMessageW.invokeExact(msg);
+        final var _ = (long) Win32.DispatchMessageW.invokeExact(msg);
         if (done.getAsBoolean()) break;
       }
     } catch (final Throwable t) {
