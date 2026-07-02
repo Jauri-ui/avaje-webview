@@ -1073,7 +1073,7 @@ public final class Win32WebView extends WebviewBase {
    */
   @SuppressWarnings("unused")
   private static int comQI(MemorySegment self, MemorySegment iid, MemorySegment ppv) {
-    if (ppv.address() != 0) ppv.set(ADDRESS, 0, self);
+    if (ppv.address() != 0) ppv.reinterpret(ADDRESS.byteSize()).set(ADDRESS, 0, self);
     return 0; // S_OK
   }
 
