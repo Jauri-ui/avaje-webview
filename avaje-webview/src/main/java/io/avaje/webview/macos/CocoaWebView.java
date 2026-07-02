@@ -159,7 +159,8 @@ public final class CocoaWebView extends WebviewBase {
   private MemorySegment drainStub;
   private final ConcurrentLinkedQueue<Runnable> pendingDispatches = new ConcurrentLinkedQueue<>();
 
-  public CocoaWebView(boolean debug, int width, int height) {
+  public CocoaWebView(boolean debug, boolean redirectConsole, int width, int height) {
+    super(redirectConsole);
     openWindows.incrementAndGet();
     buildDrainStub();
     initNSApp();

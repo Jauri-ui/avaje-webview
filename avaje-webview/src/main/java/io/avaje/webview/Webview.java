@@ -236,6 +236,14 @@ public interface Webview extends Closeable, Runnable {
     Builder enableDeveloperTools(boolean enableDeveloperTools);
 
     /**
+     * Enables JS console redirection to {@link System.Logger}. Defaults to {@code false}.
+     *
+     * @param redirectConsole {@code true} to forward console output to the Java logger
+     * @return this builder
+     */
+    Builder redirectConsole(boolean redirectConsole);
+
+    /**
      * Attaches the webview to an existing native window handle.
      *
      * @param windowPointer a {@link MemorySegment} pointing to a native window handle

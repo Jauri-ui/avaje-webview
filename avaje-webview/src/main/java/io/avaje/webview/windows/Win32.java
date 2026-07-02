@@ -512,7 +512,13 @@ final class Win32 {
       final var _ =
           (int)
               SetWindowPos.invokeExact(
-                  hwnd, MemorySegment.NULL, 0, 0, screenW, screenH, SWP_NOZORDER | SWP_FRAMECHANGED);
+                  hwnd,
+                  MemorySegment.NULL,
+                  0,
+                  0,
+                  screenW,
+                  screenH,
+                  SWP_NOZORDER | SWP_FRAMECHANGED);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
@@ -640,6 +646,43 @@ final class Win32 {
     }
   }
 
+  /** Reads a {@code REG_DWORD} value from the registry, or returns {@code -1} on any error. */
+  static int regQueryDword(long rootKey, String subKey, String valueName) {
+    try (var a = Arena.ofConfined()) {
+      final var pKey = a.allocate(JAVA_LONG);
+      var status =
+          (int)
+              RegOpenKeyExW.invokeExact(
+                  rootKey,
+                  a.allocateFrom(subKey, StandardCharsets.UTF_16LE),
+                  0,
+                  KEY_READ | KEY_WOW64_32KEY,
+                  pKey);
+      if (status != ERROR_SUCCESS) return -1;
+      final var hkey = pKey.get(JAVA_LONG, 0);
+      try {
+        final var buf = a.allocate(JAVA_INT);
+        final var cbData = a.allocate(JAVA_INT);
+        cbData.set(JAVA_INT, 0, 4);
+        status =
+            (int)
+                RegQueryValueExW.invokeExact(
+                    hkey,
+                    a.allocateFrom(valueName, StandardCharsets.UTF_16LE),
+                    MemorySegment.NULL,
+                    MemorySegment.NULL,
+                    buf,
+                    cbData);
+        if (status != ERROR_SUCCESS) return -1;
+        return buf.get(JAVA_INT, 0);
+      } finally {
+        final var _ = (int) RegCloseKey.invokeExact(hkey);
+      }
+    } catch (final Throwable t) {
+      return -1;
+    }
+  }
+
   /**
    * Initializes COM on the calling thread as a Single-Threaded Apartment (STA).
    *
@@ -668,8 +711,8 @@ final class Win32 {
   }
 
   /**
-   * Resolves the function at vtable index {@code idx} of {@code comObj} and returns a
-   * {@link MethodHandle} bound to the given {@link FunctionDescriptor}.
+   * Resolves the function at vtable index {@code idx} of {@code comObj} and returns a {@link
+   * MethodHandle} bound to the given {@link FunctionDescriptor}.
    */
   static MethodHandle resolve(MemorySegment comObj, int idx, FunctionDescriptor fd) {
     return Linker.nativeLinker().downcallHandle(vtableFn(comObj, idx), fd);
@@ -678,8 +721,8 @@ final class Win32 {
   /**
    * Reads the function pointer at vtable slot {@code idx} of a COM object.
    *
-   * <p>A COM object's first field is a pointer to its vtable (an array of function pointers).
-   * This method dereferences the vtable pointer and returns the address at position {@code idx}.
+   * <p>A COM object's first field is a pointer to its vtable (an array of function pointers). This
+   * method dereferences the vtable pointer and returns the address at position {@code idx}.
    */
   static MemorySegment vtableFn(MemorySegment comObj, int idx) {
     final var vtable =

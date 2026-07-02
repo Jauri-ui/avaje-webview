@@ -401,6 +401,32 @@ class WebviewIntegrationTest {
     assertTrue(called.get());
   }
 
+  @Test
+  void bindAvailableInInitScriptWhenSetBeforeBind() {
+    final var called = new AtomicBoolean(false);
+    final var failure = new AtomicReference<Throwable>();
+
+    try (var w = Webview.builder().build()) {
+      w.setInitScript("window.__initReady__ && window.__initReady__('ok');");
+      w.bind(
+          "__initReady__",
+          req -> {
+            try {
+              assertEquals("[\"ok\"]", req);
+              called.set(true);
+            } catch (final Throwable t) {
+              failure.set(t);
+            }
+            w.dispatch(w::close);
+            return "null";
+          });
+      w.setHTML("<html></html>");
+      w.run();
+    }
+    rethrow(failure);
+    assertTrue(called.get(), "bound function was not available when init script ran");
+  }
+
   // -------------------------------------------------------------------------
   // setHTML — content replacement
   // -------------------------------------------------------------------------

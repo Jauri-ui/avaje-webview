@@ -162,7 +162,8 @@ public final class Win32WebView extends WebviewBase {
   private MemorySegment mainWndProcStub, msgWndProcStub, widgetWndProcStub;
   private MemorySegment cachedQI, cachedAddRef, cachedRelease;
 
-  public Win32WebView(boolean debug, int width, int height) {
+  public Win32WebView(boolean debug, boolean redirectConsole, int width, int height) {
+    super(redirectConsole);
     Win32.coInitialize();
     buildWndProcStubs();
     createWindows(width, height);
@@ -743,6 +744,7 @@ public final class Win32WebView extends WebviewBase {
    */
   private void doInitTasks() {
     applySettings(debugMode);
+    Win32.applyDarkMode(hwnd, isDarkTheme());
     setupJsBridge(POST_FN); // nativeAddUserScript uses nested pump; works from msgWndProc context
     resizeWidget(hwnd);
     try {
@@ -959,11 +961,11 @@ public final class Win32WebView extends WebviewBase {
 
   private static boolean isDarkTheme() {
     final var val =
-        Win32.regQueryString(
+        Win32.regQueryDword(
             Win32.HKEY_CURRENT_USER,
             "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
             "AppsUseLightTheme");
-    return "0".equals(val);
+    return val == 0;
   }
 
   /// Message loop

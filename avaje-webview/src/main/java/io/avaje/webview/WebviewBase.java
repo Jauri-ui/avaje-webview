@@ -53,6 +53,12 @@ public abstract sealed class WebviewBase implements Webview
       })();
       """;
 
+  private final boolean redirectConsole;
+
+  protected WebviewBase(boolean redirectConsole) {
+    this.redirectConsole = redirectConsole;
+  }
+
   // JS bridge state, all mutations to userScripts/bindScriptIdx must happen on the main thread
   private final List<String> userScripts = new ArrayList<>();
   private int bindScriptIdx = -1;
@@ -66,7 +72,11 @@ public abstract sealed class WebviewBase implements Webview
    */
   protected final void setupJsBridge(String postFn) {
     addUserScriptInternal(buildInitScript(postFn));
-    redirectConsole();
+    bindScriptIdx = userScripts.size();
+    final var emptyBind = buildBindScript();
+    userScripts.add(emptyBind);
+    nativeAddUserScript(emptyBind);
+    if (redirectConsole) redirectConsole();
   }
 
   /**

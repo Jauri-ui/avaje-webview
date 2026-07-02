@@ -74,7 +74,8 @@ public final class GtkWebView extends WebviewBase {
   private final int initialWidth;
   private final int initialHeight;
 
-  public GtkWebView(boolean debug, int width, int height) {
+  public GtkWebView(boolean debug, boolean redirectConsole, int width, int height) {
+    super(redirectConsole);
     this.initialWidth = width;
     this.initialHeight = height;
     openWindows.incrementAndGet();
