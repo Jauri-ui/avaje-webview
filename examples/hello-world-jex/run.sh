@@ -1,1 +1,1 @@
-mvn clean package && java -p ./target/modules -m webview.example
+mvn clean package && java -XX:+IgnoreUnrecognizedVMOptions -XstartOnFirstThread -p ./target/modules -m webview.example

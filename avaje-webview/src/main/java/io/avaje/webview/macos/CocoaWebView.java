@@ -163,7 +163,6 @@ public final class CocoaWebView extends WebviewBase {
     super(redirectConsole);
     openWindows.incrementAndGet();
     buildDrainStub();
-    initNSApp();
 
     final var current = Thread.currentThread();
     if (nsAppThread.compareAndSet(null, current)) {
@@ -174,6 +173,7 @@ public final class CocoaWebView extends WebviewBase {
             "First CocoaWebView must be created on the first thread. Pass -XstartOnFirstThread.");
       }
       initWindowAndWebView(debug, width, height);
+      initNSApp();
     } else if (current == nsAppThread.get()) {
       // Additional window created from the main thread itself.
       initWindowAndWebView(debug, width, height);
