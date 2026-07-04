@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -460,6 +463,153 @@ class WebviewIntegrationTest {
     }
     rethrow(failure);
     assertEquals(2, callCount.get());
+  }
+
+  // -------------------------------------------------------------------------
+  // setHTML — file and large content
+  // -------------------------------------------------------------------------
+
+  @Test
+  void setHTMLFromFile() throws IOException {
+    final var called = new AtomicBoolean(false);
+
+    try (var w = Webview.builder().build()) {
+      w.bind(
+          "fileLoaded",
+          _ -> {
+            called.set(true);
+            w.dispatch(w::close);
+            return "null";
+          });
+      final String html;
+      try (var is = getClass().getResourceAsStream("/test-page.html")) {
+        html = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+      }
+      w.setHTML(html);
+      w.run();
+    }
+    assertTrue(called.get(), "fileLoaded binding was never invoked");
+  }
+
+  @Test
+  void setHTMLLargeContent() {
+    final var called = new AtomicBoolean(false);
+
+    final var sb = new StringBuilder();
+    sb.append("<!DOCTYPE html><html><body>");
+    for (int i = 0; i < 10_000; i++) {
+      sb.append("<p>Paragraph ").append(i)
+          .append(" — padding content to make this payload large enough to exercise the IPC path.</p>");
+    }
+    sb.append("<script>window.largeContentLoaded();</script></body></html>");
+
+    try (var w = Webview.builder().build()) {
+      w.bind(
+          "largeContentLoaded",
+          _ -> {
+            called.set(true);
+            w.dispatch(w::close);
+            return "null";
+          });
+      w.setHTML(sb.toString());
+      w.run();
+    }
+    assertTrue(called.get(), "largeContentLoaded binding was never invoked");
+  }
+
+  @Test
+  void setHTMLLargeFileContent() throws IOException {
+    final var called = new AtomicBoolean(false);
+
+    final var sb = new StringBuilder();
+    sb.append("<!DOCTYPE html><html><body>");
+    for (int i = 0; i < 10_000; i++) {
+      sb.append("<p>Paragraph ").append(i)
+          .append(" — padding content to make this file large enough to exercise the IPC path.</p>");
+    }
+    sb.append("<script>window.largeFileLoaded();</script></body></html>");
+
+    final var tmp = Files.createTempFile("webview-large-", ".html");
+    try {
+      Files.writeString(tmp, sb.toString());
+
+      try (var w = Webview.builder().build()) {
+        w.bind(
+            "largeFileLoaded",
+            _ -> {
+              called.set(true);
+              w.dispatch(w::close);
+              return "null";
+            });
+        w.setHTML(Files.readString(tmp));
+        w.run();
+      }
+    } finally {
+      Files.deleteIfExists(tmp);
+    }
+    assertTrue(called.get(), "largeFileLoaded binding was never invoked");
+  }
+
+  // -------------------------------------------------------------------------
+  // navigate — file URL
+  // -------------------------------------------------------------------------
+
+  @Test
+  void navigateToFileUrl() throws IOException {
+    final var called = new AtomicBoolean(false);
+
+    final var tmp = Files.createTempFile("webview-nav-", ".html");
+    try {
+      Files.writeString(tmp, "<html><body><script>window.fileNavLoaded();</script></body></html>");
+
+      try (var w = Webview.builder().build()) {
+        w.bind(
+            "fileNavLoaded",
+            _ -> {
+              called.set(true);
+              w.dispatch(w::close);
+              return "null";
+            });
+        w.navigate(tmp.toUri().toString());
+        w.run();
+      }
+    } finally {
+      Files.deleteIfExists(tmp);
+    }
+    assertTrue(called.get(), "fileNavLoaded binding was never invoked");
+  }
+
+  @Test
+  void navigateToLargeFileUrl() throws IOException {
+    final var called = new AtomicBoolean(false);
+
+    final var sb = new StringBuilder();
+    sb.append("<!DOCTYPE html><html><body>");
+    for (int i = 0; i < 10_000; i++) {
+      sb.append("<p>Paragraph ").append(i)
+          .append(" — padding content to make this file large enough to exercise the IPC path.</p>");
+    }
+    sb.append("<script>window.largeFileNavLoaded();</script></body></html>");
+
+    final var tmp = Files.createTempFile("webview-large-nav-", ".html");
+    try {
+      Files.writeString(tmp, sb.toString());
+
+      try (var w = Webview.builder().build()) {
+        w.bind(
+            "largeFileNavLoaded",
+            _ -> {
+              called.set(true);
+              w.dispatch(w::close);
+              return "null";
+            });
+        w.navigate(tmp.toUri().toString());
+        w.run();
+      }
+    } finally {
+      Files.deleteIfExists(tmp);
+    }
+    assertTrue(called.get(), "largeFileNavLoaded binding was never invoked");
   }
 
   // -------------------------------------------------------------------------

@@ -96,12 +96,18 @@ public abstract sealed class WebviewBase implements Webview
 
   @Override
   public void setHTML(@Nullable String html) {
-    dispatchImpl(() -> setHtmlImpl(html != null ? html : ""));
+    dispatchImpl(() -> {
+      syncBindScript();
+      setHtmlImpl(html != null ? html : "");
+    });
   }
 
   @Override
   public void navigate(@Nullable String url) {
-    dispatchImpl(() -> navigateImpl(url == null ? "about:blank" : url));
+    dispatchImpl(() -> {
+      syncBindScript();
+      navigateImpl(url == null ? "about:blank" : url);
+    });
   }
 
   @Override
@@ -151,7 +157,7 @@ public abstract sealed class WebviewBase implements Webview
     dispatchImpl(
         () -> {
           rebuildBindScript();
-          evalImpl("if(window.__webview__)window.__webview__.onBind(" + jsonEscape(name) + ")");
+          evalImpl("if(window.__webview__&&!window.hasOwnProperty(" + jsonEscape(name) + "))window.__webview__.onBind(" + jsonEscape(name) + ")");
         });
   }
 
@@ -263,6 +269,11 @@ public abstract sealed class WebviewBase implements Webview
     dispatchImpl(() -> evalImpl(js));
   }
 
+  private void syncBindScript() {
+    userScripts.set(bindScriptIdx, buildBindScript());
+    rebuildAllUserScripts();
+  }
+
   // User-script tracking
   private void addUserScriptInternal(String js) {
     userScripts.add(js);
@@ -271,13 +282,17 @@ public abstract sealed class WebviewBase implements Webview
 
   private void rebuildBindScript() {
     final var newScript = buildBindScript();
-    nativeRemoveAllUserScripts();
     if (bindScriptIdx >= 0) {
       userScripts.set(bindScriptIdx, newScript);
     } else {
       bindScriptIdx = userScripts.size();
       userScripts.add(newScript);
     }
+    rebuildAllUserScripts();
+  }
+
+  private void rebuildAllUserScripts() {
+    nativeRemoveAllUserScripts();
     for (final String s : userScripts) nativeAddUserScript(s);
   }
 
