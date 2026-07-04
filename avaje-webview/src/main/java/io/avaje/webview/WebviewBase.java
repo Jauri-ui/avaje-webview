@@ -65,7 +65,8 @@ public abstract sealed class WebviewBase implements Webview
   private final Map<String, BindCallback> bindings = new ConcurrentHashMap<>();
 
   /**
-   * Injects the JS bridge init script and sets up console redirection. Must be called after the user-content manager is configured.
+   * Injects the JS bridge init script and sets up console redirection. Must be called after the
+   * user-content manager is configured.
    *
    * @param postFn JS expression for posting messages to Java, e.g. {@code "function(msg){return
    *     window.webkit.messageHandlers.__webview__.postMessage(msg);}"}.
@@ -236,7 +237,6 @@ public abstract sealed class WebviewBase implements Webview
     dispatchImpl(() -> evalImpl(js));
   }
 
-
   // User-script tracking
 
   private void addUserScriptInternal(String js) {
@@ -327,14 +327,14 @@ public abstract sealed class WebviewBase implements Webview
    * every page load.
    *
    * <p>The script runs in a self-executing function ({@code (function(){...})()}) in strict mode so
-   * it does not leak any variables into the global scope. It installs exactly one global:
-   * {@code window.__webview__} — an instance of the private {@code Webview_} class.
+   * it does not leak any variables into the global scope. It installs exactly one global: {@code
+   * window.__webview__} — an instance of the private {@code Webview_} class.
    *
    * <p><b>ID generation ({@code generateId})</b><br>
-   * Each Java binding call needs a unique correlation ID so that when Java calls back with
-   * {@code onReply(id, status, result)}, the bridge can locate and settle the right Promise.
-   * {@code window.crypto.getRandomValues} produces 16 cryptographically random bytes formatted as
-   * a 32-character lowercase hex string. {@code window.msCrypto} is the IE11 fallback (kept for
+   * Each Java binding call needs a unique correlation ID so that when Java calls back with {@code
+   * onReply(id, status, result)}, the bridge can locate and settle the right Promise. {@code
+   * window.crypto.getRandomValues} produces 16 cryptographically random bytes formatted as a
+   * 32-character lowercase hex string. {@code window.msCrypto} is the IE11 fallback (kept for
    * completeness; unreachable on modern WebView2/WebKit).
    *
    * <p><b>Promise map ({@code _promises})</b><br>
@@ -351,16 +351,18 @@ public abstract sealed class WebviewBase implements Webview
    *
    * <p><b>{@code Webview_.prototype.call}</b><br>
    * The core RPC method. Called indirectly by every bound {@code window.xxx()} function:
+   *
    * <ol>
-   *   <li>Generates a unique {@code _id}.</li>
-   *   <li>Collects all arguments after the method name into {@code _params}
-   *       ({@code Array.prototype.slice} so it works with the {@code arguments} object).</li>
-   *   <li>Creates a Promise and stores {@code {resolve, reject}} in {@code _promises[_id]}.</li>
-   *   <li>Posts {@code {id, method, params}} as JSON to the native side.</li>
-   *   <li>Returns the Promise — the caller {@code await}s it.</li>
+   *   <li>Generates a unique {@code _id}.
+   *   <li>Collects all arguments after the method name into {@code _params} ({@code
+   *       Array.prototype.slice} so it works with the {@code arguments} object).
+   *   <li>Creates a Promise and stores {@code {resolve, reject}} in {@code _promises[_id]}.
+   *   <li>Posts {@code {id, method, params}} as JSON to the native side.
+   *   <li>Returns the Promise — the caller {@code await}s it.
    * </ol>
-   * Java receives the JSON, invokes the bound {@link WebviewBinding}, and calls back via
-   * {@link #returnResult}, which evals {@code window.__webview__.onReply(id, status, result)}.
+   *
+   * Java receives the JSON, invokes the bound {@link WebviewBinding}, and calls back via {@link
+   * #returnResult}, which evals {@code window.__webview__.onReply(id, status, result)}.
    *
    * <p><b>{@code Webview_.prototype.onReply}</b><br>
    * Called by Java (via {@code eval}) when a binding completes. Looks up the pending Promise by
@@ -371,21 +373,21 @@ public abstract sealed class WebviewBase implements Webview
    *
    * <p><b>{@code Webview_.prototype.onBind} / {@code onUnbind}</b><br>
    * Called by Java when {@link #bind} / {@link #unbind} are invoked at runtime (after the page has
-   * loaded). {@code onBind} installs a new property on {@code window} whose value is a closure
-   * that prepends the method name to its arguments and delegates to {@code call()}. The
-   * {@code bind(this)} at the end ensures {@code this} inside the closure refers to the
-   * {@code Webview_} instance (not the global object). {@code onUnbind} removes the property;
-   * both guard against double-bind/double-unbind with an explicit check.
+   * loaded). {@code onBind} installs a new property on {@code window} whose value is a closure that
+   * prepends the method name to its arguments and delegates to {@code call()}. The {@code
+   * bind(this)} at the end ensures {@code this} inside the closure refers to the {@code Webview_}
+   * instance (not the global object). {@code onUnbind} removes the property; both guard against
+   * double-bind/double-unbind with an explicit check.
    *
    * <p><b>Injection timing</b><br>
    * This script runs at document-start (before any page scripts) so that {@code window.__webview__}
-   * exists by the time the page's own {@code <script>} tags execute. Bindings registered before
-   * the first page load are installed via a second user script ({@link #buildBindScript}) that also
+   * exists by the time the page's own {@code <script>} tags execute. Bindings registered before the
+   * first page load are installed via a second user script ({@link #buildBindScript}) that also
    * runs at document-start, after this one.
    *
    * @param postFn a JS function expression (not a statement) that posts a single string message to
-   *     the native side, e.g. {@code
-   *     "function(message){return window.webkit.messageHandlers.__webview__.postMessage(message);}"}
+   *     the native side, e.g. {@code "function(message){return
+   *     window.webkit.messageHandlers.__webview__.postMessage(message);}"}
    * @return the complete, minified bridge script ready for injection as a user script
    */
   private static String buildInitScript(String postFn) {

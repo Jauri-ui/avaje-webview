@@ -40,7 +40,7 @@ final class Gtk4 {
    *
    * <p>Return type is {@code gboolean} = C {@code int} = {@code JAVA_INT}. Non-zero means success.
    */
-  static final MethodHandle GTK_INIT_CHECK =
+  private static final MethodHandle GTK_INIT_CHECK =
       downcall("gtk_init_check", FunctionDescriptor.of(JAVA_INT));
 
   /**
@@ -51,7 +51,7 @@ final class Gtk4 {
    * sink it when the window becomes a root widget. Since we are the root, we let GTK manage the
    * lifecycle and do not call {@code g_object_ref_sink} on the window (only on the WebView child).
    */
-  static final MethodHandle GTK_WINDOW_NEW =
+  private static final MethodHandle GTK_WINDOW_NEW =
       downcall("gtk_window_new", FunctionDescriptor.of(ADDRESS));
 
   /**
@@ -59,7 +59,7 @@ final class Gtk4 {
    *
    * <p>Sets the title bar text.
    */
-  static final MethodHandle GTK_WINDOW_SET_TITLE =
+  private static final MethodHandle GTK_WINDOW_SET_TITLE =
       downcall("gtk_window_set_title", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
 
   /**
@@ -67,7 +67,7 @@ final class Gtk4 {
    *
    * <p>Sets the window's <em>default</em> size
    */
-  static final MethodHandle GTK_WINDOW_SET_DEFAULT_SIZE =
+  private static final MethodHandle GTK_WINDOW_SET_DEFAULT_SIZE =
       downcall(
           "gtk_window_set_default_size", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, JAVA_INT));
 
@@ -80,7 +80,7 @@ final class Gtk4 {
    * when making a window fixed-size. GTK only honors the default size change when the resizable
    * state is already in its final value.
    */
-  static final MethodHandle GTK_WINDOW_SET_RESIZABLE =
+  private static final MethodHandle GTK_WINDOW_SET_RESIZABLE =
       downcall("gtk_window_set_resizable", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
 
   /**
@@ -91,7 +91,7 @@ final class Gtk4 {
    * child's floating reference (effectively calling {@code g_object_ref_sink}) so we must have
    * called {@link GLib#gObjectRefSink} beforehand to hold our own reference.
    */
-  static final MethodHandle GTK_WINDOW_SET_CHILD =
+  private static final MethodHandle GTK_WINDOW_SET_CHILD =
       downcall("gtk_window_set_child", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
 
   /**
@@ -107,7 +107,7 @@ final class Gtk4 {
    * guarantees teardown even if third-party code has connected a vetoing {@code close-request}
    * handler.
    */
-  static final MethodHandle GTK_WINDOW_DESTROY =
+  private static final MethodHandle GTK_WINDOW_DESTROY =
       downcall("gtk_window_destroy", FunctionDescriptor.ofVoid(ADDRESS));
 
   /**
@@ -116,7 +116,7 @@ final class Gtk4 {
    * <p>Asks the window manager to maximize the window. The request is asynchronous; the actual
    * resize happens on the next event loop iteration when the compositor responds.
    */
-  static final MethodHandle GTK_WINDOW_MAXIMIZE =
+  private static final MethodHandle GTK_WINDOW_MAXIMIZE =
       downcall("gtk_window_maximize", FunctionDescriptor.ofVoid(ADDRESS));
 
   /**
@@ -125,7 +125,7 @@ final class Gtk4 {
    * <p>Asks the window manager to switch the window to fullscreen mode. Like {@link
    * #GTK_WINDOW_MAXIMIZE}, the transition is compositor-driven and asynchronous.
    */
-  static final MethodHandle GTK_WINDOW_FULLSCREEN =
+  private static final MethodHandle GTK_WINDOW_FULLSCREEN =
       downcall("gtk_window_fullscreen", FunctionDescriptor.ofVoid(ADDRESS));
 
   /**
@@ -141,7 +141,7 @@ final class Gtk4 {
    *
    * <p>{@code gboolean} = C {@code int} = {@code JAVA_INT}.
    */
-  static final MethodHandle GTK_WIDGET_SET_VISIBLE =
+  private static final MethodHandle GTK_WIDGET_SET_VISIBLE =
       downcall("gtk_widget_set_visible", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
 
   /**
@@ -154,7 +154,7 @@ final class Gtk4 {
    *
    * <p>Passing {@code -1} for either dimension means "no minimum" on that axis.
    */
-  static final MethodHandle GTK_WIDGET_SET_SIZE_REQUEST =
+  private static final MethodHandle GTK_WIDGET_SET_SIZE_REQUEST =
       downcall(
           "gtk_widget_set_size_request", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, JAVA_INT));
 
@@ -168,7 +168,7 @@ final class Gtk4 {
    * <p>Returns {@code gboolean} (non-zero if focus was successfully moved), but we discard the
    * return value — focus failing is non-fatal; the user can still click to focus.
    */
-  static final MethodHandle GTK_WIDGET_GRAB_FOCUS =
+  private static final MethodHandle GTK_WIDGET_GRAB_FOCUS =
       downcall("gtk_widget_grab_focus", FunctionDescriptor.of(JAVA_INT, ADDRESS));
 
   /**
@@ -183,7 +183,7 @@ final class Gtk4 {
    * <p>Returns {@code NULL} if GTK has not been initialized, hence the null-address guard in {@link
    * LinuxHelper#setWindowAppearance}.
    */
-  static final MethodHandle GTK_SETTINGS_GET_DEFAULT =
+  private static final MethodHandle GTK_SETTINGS_GET_DEFAULT =
       downcall("gtk_settings_get_default", FunctionDescriptor.of(ADDRESS));
 
   private static MethodHandle downcall(String sym, FunctionDescriptor desc) {

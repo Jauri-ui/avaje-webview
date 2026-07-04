@@ -5,24 +5,7 @@ import java.nio.charset.StandardCharsets;
 
 import io.avaje.webview.Webview;
 
-/**
- * GTK4-specific window operations helper for {@link GtkWebView}.
- *
- * <p>Groups three categories of operations:
- *
- * <ul>
- *   <li><b>Dark mode</b> — applied via the process-wide {@code GtkSettings} GObject property {@code
- *       gtk-application-prefer-dark-theme}. GTK4 does not expose a per-window appearance API; all
- *       windows in the process follow the same setting.
- *   <li><b>Maximize / fullscreen</b> — delegated to the window manager via GTK4 window hints. These
- *       are asynchronous requests: GTK sends a WM hint and the compositor/WM honors it at its
- *       discretion; the window state change is not immediate.
- *   <li><b>Icon</b> — intentionally unimplemented. GTK4 removed {@code gtk_window_set_icon} and the
- *       file-path–based icon API; app icons are now set through the {@code .desktop} file and the
- *       icon theme. {@code gtk_window_set_icon_name()} works with theme icon names, not arbitrary
- *       file paths.
- * </ul>
- */
+/** GTK4-specific window operations helper for {@link GtkWebView}. */
 final class LinuxHelper {
 
   private LinuxHelper() {}

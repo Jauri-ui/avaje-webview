@@ -60,6 +60,18 @@ final class WebKit6 {
   static final FunctionDescriptor SCRIPT_MESSAGE_RECEIVED_DESC =
       FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS);
 
+  /** {@code WebKitLoadEvent} value for a completed page load. */
+  static final int WEBKIT_LOAD_FINISHED = 3;
+
+  /**
+   * {@code FunctionDescriptor} for the {@code "load-changed"} signal.
+   *
+   * <p>C signature: {@code void(*)(WebKitWebView* web_view, WebKitLoadEvent load_event, gpointer
+   * user_data)}. {@code WebKitLoadEvent} is a GEnum (int).
+   */
+  static final FunctionDescriptor LOAD_CHANGED_DESC =
+      FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS);
+
   private static final Linker LINKER = Linker.nativeLinker();
 
   /**
@@ -89,7 +101,7 @@ final class WebKit6 {
    * GLib#gObjectRefSink} to claim ownership before GTK's container management can inadvertently
    * free it.
    */
-  static final MethodHandle WEBKIT_WEB_VIEW_NEW =
+  private static final MethodHandle WEBKIT_WEB_VIEW_NEW =
       downcall("webkit_web_view_new", FunctionDescriptor.of(ADDRESS));
 
   /**
@@ -103,7 +115,7 @@ final class WebKit6 {
    * returned pointer. It is owned by the {@code WebKitWebView} and is freed when the view is
    * destroyed.
    */
-  static final MethodHandle WEBKIT_WEB_VIEW_GET_USER_CONTENT_MANAGER =
+  private static final MethodHandle WEBKIT_WEB_VIEW_GET_USER_CONTENT_MANAGER =
       downcall("webkit_web_view_get_user_content_manager", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
   /**
@@ -115,7 +127,7 @@ final class WebKit6 {
    * <p><b>Borrowed reference:</b> same semantics as {@link
    * #WEBKIT_WEB_VIEW_GET_USER_CONTENT_MANAGER}. Owned by the web view.
    */
-  static final MethodHandle WEBKIT_WEB_VIEW_GET_SETTINGS =
+  private static final MethodHandle WEBKIT_WEB_VIEW_GET_SETTINGS =
       downcall("webkit_web_view_get_settings", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
   /**
@@ -125,7 +137,7 @@ final class WebKit6 {
    * {@code "https://..."}, {@code "file:///..."}). The navigation is asynchronous; the page is not
    * loaded when this returns.
    */
-  static final MethodHandle WEBKIT_WEB_VIEW_LOAD_URI =
+  private static final MethodHandle WEBKIT_WEB_VIEW_LOAD_URI =
       downcall("webkit_web_view_load_uri", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
 
   /**
@@ -134,7 +146,7 @@ final class WebKit6 {
    *
    * <p>Loads raw HTML content directly into the web view.
    */
-  static final MethodHandle WEBKIT_WEB_VIEW_LOAD_HTML =
+  private static final MethodHandle WEBKIT_WEB_VIEW_LOAD_HTML =
       downcall("webkit_web_view_load_html", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS));
 
   /**
@@ -161,7 +173,7 @@ final class WebKit6 {
    * (injecting binding stubs, returning results via {@code window.__webview__.onReply}), not to
    * capture JS return values.
    */
-  static final MethodHandle WEBKIT_WEB_VIEW_EVALUATE_JAVASCRIPT =
+  private static final MethodHandle WEBKIT_WEB_VIEW_EVALUATE_JAVASCRIPT =
       downcall(
           "webkit_web_view_evaluate_javascript",
           FunctionDescriptor.ofVoid(
@@ -179,7 +191,7 @@ final class WebKit6 {
    * eval on a bare (no-page) web view, which would assert {@code WEBKIT_IS_WEB_VIEW} and crash in
    * debug builds.
    */
-  static final MethodHandle WEBKIT_WEB_VIEW_GET_URI =
+  private static final MethodHandle WEBKIT_WEB_VIEW_GET_URI =
       downcall("webkit_web_view_get_uri", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
   /**
@@ -190,7 +202,7 @@ final class WebKit6 {
    * {@code document.execCommand("copy")} and the Clipboard API. Enabled unconditionally so app code
    * can use clipboard features without extra permission prompts.
    */
-  static final MethodHandle WEBKIT_SETTINGS_SET_JS_CLIPBOARD =
+  private static final MethodHandle WEBKIT_SETTINGS_SET_JS_CLIPBOARD =
       downcall(
           "webkit_settings_set_javascript_can_access_clipboard",
           FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
@@ -203,7 +215,7 @@ final class WebKit6 {
    * process's stdout. We enable this only in debug mode so console output is visible during
    * development without the overhead in production.
    */
-  static final MethodHandle WEBKIT_SETTINGS_SET_CONSOLE_TO_STDOUT =
+  private static final MethodHandle WEBKIT_SETTINGS_SET_CONSOLE_TO_STDOUT =
       downcall(
           "webkit_settings_set_enable_write_console_messages_to_stdout",
           FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
@@ -215,7 +227,7 @@ final class WebKit6 {
    * <p>Enables the WebKit Inspector (right-click -> Inspect Element). Must be true before a page is
    * loaded for the context menu item to appear. We only enable in debug mode.
    */
-  static final MethodHandle WEBKIT_SETTINGS_SET_DEV_EXTRAS =
+  private static final MethodHandle WEBKIT_SETTINGS_SET_DEV_EXTRAS =
       downcall(
           "webkit_settings_set_enable_developer_extras",
           FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
@@ -234,7 +246,7 @@ final class WebKit6 {
    * <p>Returns {@code gboolean}: non-zero if registration succeeded (fails only if the name is
    * already registered). We discard the return value.
    */
-  static final MethodHandle WEBKIT_UCM_REGISTER_HANDLER =
+  private static final MethodHandle WEBKIT_UCM_REGISTER_HANDLER =
       downcall(
           "webkit_user_content_manager_register_script_message_handler",
           FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
@@ -250,7 +262,7 @@ final class WebKit6 {
    * #webkitUserScriptUnref} immediately after this call. The script remains active until {@link
    * #webkitUcmRemoveAllScripts} is called or the UCM is destroyed.
    */
-  static final MethodHandle WEBKIT_UCM_ADD_SCRIPT =
+  private static final MethodHandle WEBKIT_UCM_ADD_SCRIPT =
       downcall(
           "webkit_user_content_manager_add_script", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
 
@@ -262,7 +274,7 @@ final class WebKit6 {
    * with the updated version. Removing and re-adding is simpler than WebKit's script identity API,
    * which requires tracking individual script objects.
    */
-  static final MethodHandle WEBKIT_UCM_REMOVE_ALL_SCRIPTS =
+  private static final MethodHandle WEBKIT_UCM_REMOVE_ALL_SCRIPTS =
       downcall(
           "webkit_user_content_manager_remove_all_scripts", FunctionDescriptor.ofVoid(ADDRESS));
 
@@ -289,7 +301,7 @@ final class WebKit6 {
    * <p>Returns a new reference; caller must call {@link #webkitUserScriptUnref} when done (after
    * handing it to the UCM).
    */
-  static final MethodHandle WEBKIT_USER_SCRIPT_NEW =
+  private static final MethodHandle WEBKIT_USER_SCRIPT_NEW =
       downcall(
           "webkit_user_script_new",
           FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS));
@@ -301,7 +313,7 @@ final class WebKit6 {
    * #webkitUcmAddScript} because the UCM has taken its own reference - our caller copy is no longer
    * needed. Failing to unref leaks a small heap allocation per script.
    */
-  static final MethodHandle WEBKIT_USER_SCRIPT_UNREF =
+  private static final MethodHandle WEBKIT_USER_SCRIPT_UNREF =
       downcall("webkit_user_script_unref", FunctionDescriptor.ofVoid(ADDRESS));
 
   /**
@@ -315,7 +327,7 @@ final class WebKit6 {
    * caller <em>must</em> call {@link GLib#gFree} on it after copying to Java - see {@link
    * #jscValueToString}.
    */
-  static final MethodHandle JSC_VALUE_TO_STRING =
+  private static final MethodHandle JSC_VALUE_TO_STRING =
       downcall("jsc_value_to_string", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
   private static MethodHandle downcall(String sym, FunctionDescriptor desc) {

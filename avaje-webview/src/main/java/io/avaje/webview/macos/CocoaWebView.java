@@ -223,6 +223,7 @@ public final class CocoaWebView extends WebviewBase {
     dispatchImpl(
         () -> {
           try (var a = Arena.ofConfined()) {
+            sendVoid1(nsWindow, sel(a, "orderOut:"), MemorySegment.NULL);
             sendVoid0(nsWindow, sel(a, "close"));
           }
         });
@@ -427,6 +428,28 @@ public final class CocoaWebView extends WebviewBase {
   }
 
   /**
+   * Called by our synthetic WKNavigationDelegate when the first navigation finishes. Shows the
+   * window and removes the delegate so subsequent navigations don't re-trigger the show logic.
+   */
+  @SuppressWarnings("unused")
+  public void onNavigationFinished(
+      MemorySegment self, MemorySegment cmd, MemorySegment wv, MemorySegment nav) {
+    try (var a = Arena.ofConfined()) {
+      sendVoid1(wv, sel(a, "setNavigationDelegate:"), MemorySegment.NULL);
+      sendVoid1(nsWindow, sel(a, "makeKeyAndOrderFront:"), MemorySegment.NULL);
+      final var app = send0(ObjC.getClass(a, "NSApplication"), sel(a, "sharedApplication"));
+      Linker.nativeLinker()
+          .downcallHandle(
+              ObjC.MSG_SEND_ADDR,
+              FunctionDescriptor.ofVoid(
+                  ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT))
+          .invokeExact(app, sel(a, "activateIgnoringOtherApps:"), 1);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
    * Fires on the main thread whenever the window is about to close. The AtomicBoolean ensures the
    * shutdown sequence runs exactly once regardless of who initiated the close.
    */
@@ -597,23 +620,11 @@ public final class CocoaWebView extends WebviewBase {
 
       sendVoid1(nsWindow, sel(a, "setDelegate:"), createWindowDelegate(a));
       sendVoid1(nsWindow, sel(a, "setContentView:"), wkWebView);
-      // makeKeyAndOrderFront: shows the window AND gives it keyboard focus (makes it the key
-      // window). Passing NULL as the sender is conventional; AppKit ignores it for this selector.
-      sendVoid1(nsWindow, sel(a, "makeKeyAndOrderFront:"), MemorySegment.NULL);
-
-      // activateIgnoringOtherApps:YES brings the app to the foreground. Without this call,
-      // launching from a terminal leaves the terminal as the active app and the new window
-      // appears behind it. YES is required - NO would only activate if already foreground, which
-      // is never the case for a freshly launched process.
-      final var app = send0(ObjC.getClass(a, "NSApplication"), sel(a, "sharedApplication"));
-      Linker.nativeLinker()
-          .downcallHandle(
-              MSG_SEND_ADDR,
-              FunctionDescriptor.ofVoid(
-                  ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT))
-          .invokeExact(app, sel(a, "activateIgnoringOtherApps:"), 1);
+      // Navigation delegate shows the window once the first page finishes loading.
+      sendVoid1(wkWebView, sel(a, "setNavigationDelegate:"), createNavigationDelegate(a));
 
       setupJsBridge(POST_FN);
+      // Window is shown from onNavigationFinished when the first page load completes.
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
@@ -654,6 +665,52 @@ public final class CocoaWebView extends WebviewBase {
           (byte)
               CLASS_ADD_METHOD.invokeExact(
                   cls, sel(a, "windowWillClose:"), stub, a.allocateFrom("v@:@"));
+
+      REGISTER_CLASS_PAIR.invokeExact(cls);
+      return (MemorySegment) CLASS_CREATE_INSTANCE.invokeExact(cls, 0L);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Synthesizes a {@code WKNavigationDelegate} that shows the window after the first navigation
+   * finishes. The delegate sets itself to {@code nil} on first call to avoid re-triggering.
+   */
+  private MemorySegment createNavigationDelegate(Arena a) {
+    try {
+      final var superCls = ObjC.getClass(a, "NSObject");
+      final var clsName = "JavaWebviewNavDelegate_" + System.identityHashCode(this);
+      final var cls =
+          (MemorySegment) ALLOC_CLASS_PAIR.invokeExact(superCls, a.allocateFrom(clsName), 0L);
+
+      final var mh =
+          MethodHandles.lookup()
+              .findVirtual(
+                  CocoaWebView.class,
+                  "onNavigationFinished",
+                  MethodType.methodType(
+                      void.class,
+                      MemorySegment.class,
+                      MemorySegment.class,
+                      MemorySegment.class,
+                      MemorySegment.class))
+              .bindTo(this);
+      final var stub =
+          Linker.nativeLinker()
+              .upcallStub(
+                  mh,
+                  FunctionDescriptor.ofVoid(
+                      ValueLayout.ADDRESS, // self
+                      ValueLayout.ADDRESS, // cmd
+                      ValueLayout.ADDRESS, // WKWebView*
+                      ValueLayout.ADDRESS), // WKNavigation*
+                  callbackArena);
+
+      final var _ =
+          (byte)
+              CLASS_ADD_METHOD.invokeExact(
+                  cls, sel(a, "webView:didFinishNavigation:"), stub, a.allocateFrom("v@:@@"));
 
       REGISTER_CLASS_PAIR.invokeExact(cls);
       return (MemorySegment) CLASS_CREATE_INSTANCE.invokeExact(cls, 0L);

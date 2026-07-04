@@ -32,6 +32,24 @@
         ]
       },
       {
+        "returnType": "void",
+        "parameterTypes": [
+          "void*",
+          "jint",
+          "void*"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "jint",
+          "void*",
+          "void*",
+          "void*"
+        ]
+      },
+      {
         "returnType": "jlong",
         "parameterTypes": [
           "void*"
@@ -263,6 +281,15 @@
         "parameterTypes": [
           "void*",
           "void*",
+          "jint",
+          "jint"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*",
           "void*"
         ]
       },
@@ -281,6 +308,16 @@
           "void*",
           "void*",
           "jint",
+          "jint",
+          "jint",
+          "jint",
+          "jint"
+        ]
+      },
+      {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
           "jint",
           "jint",
           "jint",

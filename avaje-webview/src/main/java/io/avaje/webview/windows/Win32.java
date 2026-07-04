@@ -54,6 +54,7 @@ final class Win32 {
   static final int WS_THICKFRAME = 0x00040000;
   static final int WS_MAXIMIZEBOX = 0x00010000;
   static final int CW_USEDEFAULT = 0x80000000;
+  static final int SW_HIDE = 0;
   static final int SW_SHOW = 5;
   static final int SW_MAXIMIZE = 3;
   static final int WM_DESTROY = 0x0002;
@@ -66,8 +67,11 @@ final class Win32 {
   static final int WM_APP = 0x8000;
   static final int WA_INACTIVE = 0;
   static final int GWL_STYLE = -16;
+  static final int SWP_NOMOVE = 0x0002;
   static final int SWP_NOZORDER = 0x0004;
+  static final int SWP_NOACTIVATE = 0x0010;
   static final int SWP_FRAMECHANGED = 0x0020;
+  static final int WM_DPICHANGED = 0x02E0;
   static final int SM_CXSCREEN = 0;
   static final int SM_CYSCREEN = 1;
   static final int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
@@ -304,6 +308,35 @@ final class Win32 {
       downcall(
           USER32, "SetWindowLongW", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT));
 
+  /** {@code USER_DEFAULT_SCREEN_DPI}: the DPI at 100% scaling, used as the client-size baseline. */
+  static final int DEFAULT_DPI = 96;
+
+  /**
+   * {@code GetDpiForWindow(hWnd) -> UINT}
+   *
+   * <p>Returns the DPI of the monitor the window is currently on.
+   */
+  static final MethodHandle GetDpiForWindow =
+      downcall(USER32, "GetDpiForWindow", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /** {@code SetThreadDpiAwarenessContext(dpiContext) -> DPI_AWARENESS_CONTEXT} */
+  static final MethodHandle SetThreadDpiAwarenessContext =
+      USER32
+          .find("SetThreadDpiAwarenessContext")
+          .map(addr -> LINKER.downcallHandle(addr, FunctionDescriptor.of(ADDRESS, ADDRESS)))
+          .orElse(null);
+
+  /**
+   * {@code AdjustWindowRectExForDpi(lpRect, dwStyle, bMenu, dwExStyle, dpi) -> BOOL}
+   *
+   * <p>Expands a client-area rect into the outer window rect that would produce it at a given DPI.
+   */
+  static final MethodHandle AdjustWindowRectExForDpi =
+      downcall(
+          USER32,
+          "AdjustWindowRectExForDpi",
+          FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT));
+
   /**
    * {@code SetWindowTextW(hWnd, lpString) -> BOOL}
    *
@@ -497,6 +530,28 @@ final class Win32 {
       throw new RuntimeException(t);
     }
     return rect;
+  }
+
+  /**
+   * Converts a logical client-area size (at 96 DPI baseline) into the outer window size {@link
+   * #SetWindowPos} expects, scaling to the window's current monitor DPI first.
+   */
+  static int[] frameSize(MemorySegment hwnd, int width, int height) {
+    try (var a = Arena.ofConfined()) {
+      final var dpi = (int) GetDpiForWindow.invokeExact(hwnd);
+      final var scaledWidth = width * dpi / DEFAULT_DPI;
+      final var scaledHeight = height * dpi / DEFAULT_DPI;
+      final var style = (int) GetWindowLong.invokeExact(hwnd, GWL_STYLE);
+      final var rect = a.allocate(RECT_LAYOUT);
+      rect.set(JAVA_INT, 8, scaledWidth);
+      rect.set(JAVA_INT, 12, scaledHeight);
+      final var _ = (int) AdjustWindowRectExForDpi.invokeExact(rect, style, 0, 0, dpi);
+      final var frameWidth = rect.get(JAVA_INT, 8) - rect.get(JAVA_INT, 0);
+      final var frameHeight = rect.get(JAVA_INT, 12) - rect.get(JAVA_INT, 4);
+      return new int[] {frameWidth, frameHeight};
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
   }
 
   /**
@@ -695,6 +750,17 @@ final class Win32 {
       final var _ = (int) CoInitializeEx.invokeExact(MemorySegment.NULL, COINIT_APARTMENTTHREADED);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
+    }
+  }
+
+  /** Sets the calling thread's DPI awareness to Per-Monitor V2 so that {@link #GetDpiForWindow} */
+  static void enablePerMonitorDpiAwareness() {
+    if (SetThreadDpiAwarenessContext == null) return;
+    try {
+      // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = (HANDLE)-4
+      final var _ =
+          (MemorySegment) SetThreadDpiAwarenessContext.invokeExact(MemorySegment.ofAddress(-4L));
+    } catch (final Throwable ignored) {
     }
   }
 

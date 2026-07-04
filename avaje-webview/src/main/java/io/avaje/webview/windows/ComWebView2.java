@@ -19,6 +19,8 @@ final class ComWebView2 {
   private final MethodHandle navigateToString;
   private final MethodHandle addWebMessageRcvd;
   private final MethodHandle addPermissionReq;
+  private final MethodHandle addNavCompleted;
+  private final MethodHandle removeNavCompleted;
   private final MethodHandle addScriptOnDoc;
   private final MethodHandle removeScript;
   private final MethodHandle executeScript;
@@ -39,6 +41,10 @@ final class ComWebView2 {
     navigateToString = Win32.resolve(ptr, 6, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
     addPermissionReq =
         Win32.resolve(ptr, 23, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+    addNavCompleted =
+        Win32.resolve(ptr, 15, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+    removeNavCompleted =
+        Win32.resolve(ptr, 16, FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
     addScriptOnDoc =
         Win32.resolve(ptr, 27, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
     removeScript = Win32.resolve(ptr, 28, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
@@ -116,6 +122,28 @@ final class ComWebView2 {
     try (var a = Arena.ofConfined()) {
       final var pToken = a.allocate(JAVA_LONG);
       final var _ = (int) addPermissionReq.invokeExact(ptr, handler, pToken);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Calls {@code ICoreWebView2::add_NavigationCompleted} and returns the EventRegistrationToken.
+   */
+  long addNavigationCompleted(MemorySegment handler) {
+    try (var a = Arena.ofConfined()) {
+      final var pToken = a.allocate(JAVA_LONG);
+      final var _ = (int) addNavCompleted.invokeExact(ptr, handler, pToken);
+      return pToken.get(JAVA_LONG, 0);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** Calls {@code ICoreWebView2::remove_NavigationCompleted} with the given token. */
+  void removeNavigationCompleted(long token) {
+    try {
+      final var _ = (int) removeNavCompleted.invokeExact(ptr, token);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }

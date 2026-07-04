@@ -132,6 +132,8 @@ public final class Win32WebView extends WebviewBase {
   private final ConcurrentLinkedQueue<Runnable> scriptDoneCallbacks = new ConcurrentLinkedQueue<>();
 
   private volatile int minW, minH, maxW, maxH;
+  private long navToken;
+  private int currentDpi = Win32.DEFAULT_DPI;
 
   /**
    * Cross-thread dispatch queue. Tasks added by any thread are drained on the UI thread inside
@@ -165,9 +167,11 @@ public final class Win32WebView extends WebviewBase {
   public Win32WebView(boolean debug, boolean redirectConsole, int width, int height) {
     super(redirectConsole);
     Win32.coInitialize();
+    Win32.enablePerMonitorDpiAwareness();
     buildWndProcStubs();
-    createWindows(width, height);
+    createWindows();
     embedWebView2(debug);
+    setSizeImpl(width, height);
   }
 
   @Override
@@ -184,6 +188,12 @@ public final class Win32WebView extends WebviewBase {
   }
 
   private void doClose() {
+    if (hwnd != null && hwnd.address() != 0) {
+      try {
+        final var _ = (int) Win32.ShowWindow.invokeExact(hwnd, Win32.SW_HIDE);
+      } catch (final Throwable ignored) {
+      }
+    }
     if (controller != null) controller.close();
     if (hwnd != null && hwnd.address() != 0) {
       try {
@@ -211,6 +221,8 @@ public final class Win32WebView extends WebviewBase {
   @Override
   protected void setSizeImpl(int width, int height) {
     try {
+      final var frame = Win32.frameSize(hwnd, width, height);
+      currentDpi = (int) Win32.GetDpiForWindow.invokeExact(hwnd);
       final var _ =
           (int)
               Win32.SetWindowPos.invokeExact(
@@ -218,9 +230,12 @@ public final class Win32WebView extends WebviewBase {
                   MemorySegment.NULL,
                   0,
                   0,
-                  width,
-                  height,
-                  Win32.SWP_NOZORDER | Win32.SWP_FRAMECHANGED);
+                  frame[0],
+                  frame[1],
+                  Win32.SWP_NOZORDER
+                      | Win32.SWP_NOACTIVATE
+                      | Win32.SWP_NOMOVE
+                      | Win32.SWP_FRAMECHANGED);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
@@ -246,6 +261,7 @@ public final class Win32WebView extends WebviewBase {
           (int)
               Win32.SetWindowLong.invokeExact(
                   hwnd, Win32.GWL_STYLE, style & ~(Win32.WS_THICKFRAME | Win32.WS_MAXIMIZEBOX));
+      final var frame = Win32.frameSize(hwnd, width, height);
       final var _ =
           (int)
               Win32.SetWindowPos.invokeExact(
@@ -253,9 +269,12 @@ public final class Win32WebView extends WebviewBase {
                   MemorySegment.NULL,
                   0,
                   0,
-                  width,
-                  height,
-                  Win32.SWP_NOZORDER | Win32.SWP_FRAMECHANGED);
+                  frame[0],
+                  frame[1],
+                  Win32.SWP_NOZORDER
+                      | Win32.SWP_NOACTIVATE
+                      | Win32.SWP_NOMOVE
+                      | Win32.SWP_FRAMECHANGED);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
@@ -438,6 +457,30 @@ public final class Win32WebView extends WebviewBase {
         }
         return 0;
       }
+      case Win32.WM_DPICHANGED -> {
+        // Windows pre-computes the correctly scaled rect and passes it in lParam.
+        final var suggested = MemorySegment.ofAddress(lParam).reinterpret(16);
+        final var left = suggested.get(JAVA_INT, 0);
+        final var top = suggested.get(JAVA_INT, 4);
+        final var right = suggested.get(JAVA_INT, 8);
+        final var bottom = suggested.get(JAVA_INT, 12);
+        try {
+          final var _ =
+              (int)
+                  Win32.SetWindowPos.invokeExact(
+                      hWnd,
+                      MemorySegment.NULL,
+                      left,
+                      top,
+                      right - left,
+                      bottom - top,
+                      Win32.SWP_NOACTIVATE | Win32.SWP_NOZORDER);
+        } catch (final Throwable t) {
+          throw new RuntimeException(t);
+        }
+        currentDpi = (int) (wParam >>> 16);
+        return 0;
+      }
     }
     try {
       return (long) Win32.DefWindowProcW.invokeExact(hWnd, msg, wParam, lParam);
@@ -503,7 +546,7 @@ public final class Win32WebView extends WebviewBase {
    * Each window gets its own registered class with a unique name (keyed on {@link
    * System#identityHashCode} to allow multiple simultaneous windows).
    */
-  private void createWindows(int width, int height) {
+  private void createWindows() {
     try (var a = Arena.ofConfined()) {
       final var hInstance = Win32.getModuleHandle();
 
@@ -518,8 +561,8 @@ public final class Win32WebView extends WebviewBase {
                   Win32.WS_OVERLAPPEDWINDOW,
                   Win32.CW_USEDEFAULT,
                   Win32.CW_USEDEFAULT,
-                  width,
-                  height,
+                  0,
+                  0,
                   MemorySegment.NULL,
                   MemorySegment.NULL,
                   hInstance,
@@ -751,15 +794,49 @@ public final class Win32WebView extends WebviewBase {
       final var _ = controller.putIsVisible(true);
       final var _ = (int) Win32.ShowWindow.invokeExact(hwndWidget, Win32.SW_SHOW);
       final var _ = (int) Win32.UpdateWindow.invokeExact(hwndWidget);
-      final var _ = (int) Win32.ShowWindow.invokeExact(hwnd, Win32.SW_SHOW);
-      final var _ = (int) Win32.UpdateWindow.invokeExact(hwnd);
-      final var _ = (MemorySegment) Win32.SetFocus.invokeExact(hwnd);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
-    focusWebView2();
+    addFirstNavigationHandler();
     // Signal the embedWebView2 pumpLoop to exit.
     webviewReady = true;
+  }
+
+  private void addFirstNavigationHandler() {
+    try {
+      final var mh =
+          MethodHandles.lookup()
+              .findVirtual(
+                  Win32WebView.class,
+                  "onFirstNavigation",
+                  MethodType.methodType(
+                      int.class, MemorySegment.class, MemorySegment.class, MemorySegment.class))
+              .bindTo(this);
+      navToken =
+          webView2.addNavigationCompleted(
+              buildComObject(
+                  Linker.nativeLinker()
+                      .upcallStub(
+                          mh,
+                          FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS),
+                          arenaStubs)));
+    } catch (final ReflectiveOperationException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  @SuppressWarnings("unused")
+  public int onFirstNavigation(MemorySegment self, MemorySegment sender, MemorySegment args) {
+    webView2.removeNavigationCompleted(navToken);
+    navToken = 0;
+    try {
+      final var _ = (int) Win32.ShowWindow.invokeExact(hwnd, Win32.SW_SHOW);
+      final var _ = (int) Win32.UpdateWindow.invokeExact(hwnd);
+      final var _ = (MemorySegment) Win32.SetFocus.invokeExact(hwnd);
+    } catch (final Throwable ignored) {
+    }
+    focusWebView2();
+    return 0;
   }
 
   /// WebMessage handler (JS -> Java)

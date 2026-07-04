@@ -14,16 +14,9 @@ import java.lang.invoke.MethodHandle;
 /**
  * Panama FFM bindings for GLib ({@code libglib-2.0}) and GObject ({@code libgobject-2.0}).
  *
- * <p><b>Role of GLib vs GObject:</b> GLib is the low-level utility library — it owns the main event
- * loop ({@code GMainContext}/{@code GMainLoop}), the idle/timeout source scheduling API, and the
- * memory allocator ({@code g_malloc}/{@code g_free}). GObject sits on top of GLib and provides the
- * reference-counted object system that GTK and WebKitGTK build on. They ship as separate shared
- * libraries ({@code libglib-2.0.so.0} and {@code libgobject-2.0.so.0}), so we load both and chain
- * their lookups.
- *
- * <p><b>Thread safety:</b> The GLib main context (and therefore GtkWebView) is single-threaded.
- * Callers must not invoke any handle that touches GTK/GObject state from threads other than the one
- * that called {@code gtk_init}.
+ * <p><b>Thread safety:</b> The GLib main context is single-threaded. Callers must not invoke any
+ * handle that touches GTK/GObject state from threads other than the one that called {@code
+ * gtk_init}.
  */
 final class GLib {
 
@@ -45,15 +38,14 @@ final class GLib {
    * g_signal_handlers_disconnect_matched}, only the {@code data} argument is compared; all other
    * match criteria (signal id, detail quark, closure, function pointer) are ignored.
    */
-  static final int G_SIGNAL_MATCH_DATA = 1 << 4;
+  private static final int G_SIGNAL_MATCH_DATA = 1 << 4;
 
   /**
    * {@code FunctionDescriptor} for {@code gboolean(*func)(gpointer data)}.
    *
    * <p>The function must return {@code G_SOURCE_REMOVE} (0) to remove itself from the event loop
    * after one invocation, or {@code G_SOURCE_CONTINUE} (1) to keep firing. We always return 0
-   * because we add a fresh idle source per {@link #gIdleAddFull} call — there is no need to reuse
-   * the same source.
+   * because we add a fresh idle source per {@link #gIdleAddFull} call.
    */
   static final FunctionDescriptor GSOURCE_FUNC_DESC = FunctionDescriptor.of(JAVA_INT, ADDRESS);
 
@@ -81,17 +73,17 @@ final class GLib {
    * looping while there are open windows we can exit the loop cleanly when the last window closes.
    *
    * <ul>
-   *   <li>{@code context = NULL} — use the thread-default context, which is the one {@code
+   *   <li>{@code context = NULL} - use the thread-default context, which is the one {@code
    *       gtk_init} installed on the calling thread.
-   *   <li>{@code may_block = 1} — park the OS thread in {@code epoll_wait} (or equivalent) until at
+   *   <li>{@code may_block = 1} - park the OS thread in {@code epoll_wait} (or equivalent) until at
    *       least one event arrives; saves CPU vs. busy-polling.
-   *   <li>{@code may_block = 0} — process only events already queued; return immediately if none.
+   *   <li>{@code may_block = 0} - process only events already queued; return immediately if none.
    * </ul>
    *
    * <p>Returns non-zero if any events were processed, zero if the context had no pending sources
    * (only relevant when {@code may_block = 0}).
    */
-  static final MethodHandle G_MAIN_CONTEXT_ITERATION =
+  private static final MethodHandle G_MAIN_CONTEXT_ITERATION =
       downcall("g_main_context_iteration", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
 
   /**
@@ -107,15 +99,15 @@ final class GLib {
    * When the GTK thread's next loop iteration fires the stub, it drains the queue.
    *
    * <ul>
-   *   <li>{@code priority} — {@link #G_PRIORITY_HIGH_IDLE} so dispatches fire before redraws.
-   *   <li>{@code function} — a Panama upcall stub ({@link MemorySegment}) pointing to {@code
+   *   <li>{@code priority} - {@link #G_PRIORITY_HIGH_IDLE} so dispatches fire before redraws.
+   *   <li>{@code function} - a Panama upcall stub ({@link MemorySegment}) pointing to {@code
    *       GtkWebView#drainDispatchQueue}.
-   *   <li>{@code data} — we pass {@code NULL}; the stub already captures {@code this} via {@code
+   *   <li>{@code data} - we pass {@code NULL}; the stub already captures {@code this} via {@code
    *       MethodHandle#bindTo}.
-   *   <li>{@code notify} — {@code NULL}; nothing to free when the source is removed.
+   *   <li>{@code notify} - {@code NULL}; nothing to free when the source is removed.
    * </ul>
    */
-  static final MethodHandle G_IDLE_ADD_FULL =
+  private static final MethodHandle G_IDLE_ADD_FULL =
       downcall(
           "g_idle_add_full", FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
 
@@ -124,10 +116,10 @@ final class GLib {
    *
    * <p>Frees memory that was allocated by GLib's own allocator (which may not be the system {@code
    * malloc}). <em>Must</em> be used for any {@code gchar*} or other pointer returned by a
-   * GLib/GObject/WebKitGTK function that says the caller owns it — using Java's garbage collector
+   * GLib/GObject/WebKitGTK function that says the caller owns it - using Java's garbage collector
    * or the system {@code free()} would corrupt the GLib heap.
    */
-  static final MethodHandle G_FREE = downcall("g_free", FunctionDescriptor.ofVoid(ADDRESS));
+  private static final MethodHandle G_FREE = downcall("g_free", FunctionDescriptor.ofVoid(ADDRESS));
 
   /**
    * {@code g_object_ref_sink(gpointer object) -> gpointer}
@@ -138,8 +130,8 @@ final class GLib {
    * life with a reference count of 1 <em>and</em> a floating flag set. The floating flag signals "I
    * haven't been adopted by a container yet." If a GTK container (like {@code GtkWindow}) takes
    * ownership via {@code gtk_window_set_child}, it calls {@code ref_sink} internally to clear the
-   * float and increment the count — then when the container is destroyed, it unrefs and the child
-   * is freed.
+   * float and increment the count. When the container is destroyed, it unrefs and the child is
+   * freed.
    *
    * <p>We create the {@code WebKitWebView} separately and add it as the window's child, but we also
    * want to hold our own reference so we control the lifetime. Calling {@code ref_sink} atomically
@@ -151,7 +143,7 @@ final class GLib {
    * <p>Returns the same pointer passed in (useful for call-chaining, hence the {@link
    * MemorySegment} return type in {@link #gObjectRefSink}).
    */
-  static final MethodHandle G_OBJECT_REF_SINK =
+  private static final MethodHandle G_OBJECT_REF_SINK =
       downcall("g_object_ref_sink", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
   /**
@@ -161,20 +153,19 @@ final class GLib {
    * object's {@code dispose} and {@code finalize} methods and frees the underlying memory. Must be
    * paired with every {@link #G_OBJECT_REF_SINK} or explicit {@code g_object_ref} call.
    */
-  static final MethodHandle G_OBJECT_UNREF =
+  private static final MethodHandle G_OBJECT_UNREF =
       downcall("g_object_unref", FunctionDescriptor.ofVoid(ADDRESS));
 
   /**
    * {@code g_object_set(gpointer object, const gchar* first_property_name, ...) -> void}
    *
    * <p>Sets one or more GObject properties by name using a varargs C call. The argument list must
-   * be terminated by a {@code NULL} sentinel — GLib reads pairs of (name, value) until it sees the
-   * terminator.
+   * be terminated by a {@code NULL} sentinel.
    *
    * <p>Used by {@link LinuxHelper#setWindowAppearance} to flip {@code
    * gtk-application-prefer-dark-theme} on the singleton {@code GtkSettings} object.
    */
-  static final MethodHandle G_OBJECT_SET =
+  private static final MethodHandle G_OBJECT_SET =
       downcall(
           "g_object_set",
           FunctionDescriptor.ofVoid(ADDRESS, ADDRESS).appendArgumentLayouts(JAVA_INT, ADDRESS));
@@ -191,9 +182,9 @@ final class GLib {
    * us a stable, unambiguous Panama target:
    *
    * <ul>
-   *   <li>5th arg {@code destroy_data} ({@code GClosureNotify}) — {@code NULL}; we don't need
+   *   <li>5th arg {@code destroy_data} ({@code GClosureNotify}) - {@code NULL}; we don't need
    *       notification when the closure is destroyed.
-   *   <li>6th arg {@code connect_flags = 0} — default behavior (not swapped, not after-signal).
+   *   <li>6th arg {@code connect_flags = 0} - default behavior (not swapped, not after-signal).
    *       {@code G_CONNECT_SWAPPED} would swap instance and data; {@code G_CONNECT_AFTER} would
    *       fire after the default handler. Neither is needed here.
    * </ul>
@@ -202,7 +193,7 @@ final class GLib {
    * "script-message-received::__webview__"}, which scopes delivery to messages from the named
    * handler only.
    */
-  static final MethodHandle G_SIGNAL_CONNECT_DATA =
+  private static final MethodHandle G_SIGNAL_CONNECT_DATA =
       downcall(
           "g_signal_connect_data",
           FunctionDescriptor.of(JAVA_LONG, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT));
@@ -221,7 +212,7 @@ final class GLib {
    *
    * <p>Returns the number of handlers actually disconnected.
    */
-  static final MethodHandle G_SIGNAL_HANDLERS_DISCONNECT_MATCHED =
+  private static final MethodHandle G_SIGNAL_HANDLERS_DISCONNECT_MATCHED =
       downcall(
           "g_signal_handlers_disconnect_matched",
           FunctionDescriptor.of(
@@ -262,7 +253,7 @@ final class GLib {
    *
    * @param priority scheduling priority (lower = higher priority); use {@link
    *     #G_PRIORITY_HIGH_IDLE}
-   * @param fn a {@code GSourceFunc} upcall stub — a C function pointer created by Panama
+   * @param fn a {@code GSourceFunc} upcall stub - a C function pointer created by Panama
    * @param data user data passed to {@code fn}; we always pass {@code NULL} because the stub
    *     captures {@code this} via {@code bindTo}
    * @param notify {@code GDestroyNotify} called when source is removed; always {@code NULL}
@@ -334,7 +325,7 @@ final class GLib {
    *
    * <p>{@code g_object_set} is a varargs C function; this wrapper fixes the arity to {@code
    * (object, name, int_value, NULL)} for the one-property case we always use. The {@code
-   * terminator} argument must be {@link MemorySegment#NULL} — GLib reads the argument list until it
+   * terminator} argument must be {@link MemorySegment#NULL} - GLib reads the argument list until it
    * sees a {@code NULL} name.
    *
    * @param obj the GObject whose property to set
@@ -385,8 +376,7 @@ final class GLib {
    *
    * <p>The mask is fixed to {@link #G_SIGNAL_MATCH_DATA}, so only the {@code data} argument is
    * compared. All other filter arguments ({@code signal_id = 0}, {@code detail = 0}, {@code closure
-   * = NULL}, {@code func = NULL}) are ignored — GLib skips any field whose corresponding mask bit
-   * is not set.
+   * = NULL}, {@code func = NULL}) are ignored
    *
    * @param instance the GObject from which to disconnect handlers
    * @param data the {@code data} pointer value that was passed to {@link #gSignalConnect}

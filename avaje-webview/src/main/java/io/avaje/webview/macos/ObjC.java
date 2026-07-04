@@ -37,7 +37,7 @@ final class ObjC {
    * Class} object for {@code name}, or {@code NULL} if the class is not registered. Classes are
    * registered when their containing framework is dlopen'd.
    */
-  static final MethodHandle GET_CLASS =
+  private static final MethodHandle GET_CLASS =
       downcall(OBJC_LIB, "objc_getClass", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
   /**
@@ -51,7 +51,7 @@ final class ObjC {
    * <p>In Obj-C source this is the {@code @selector(name)} directive; we must call the C API
    * directly since we have no Obj-C compiler.
    */
-  static final MethodHandle SEL_REGISTER_NAME =
+  private static final MethodHandle SEL_REGISTER_NAME =
       downcall(OBJC_LIB, "sel_registerName", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
   /**
@@ -119,13 +119,13 @@ final class ObjC {
   static final MethodHandle MSG_SEND_0 =
       LINKER.downcallHandle(MSG_SEND_ADDR, FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS));
 
-  static final MethodHandle MSG_SEND_1 =
+  private static final MethodHandle MSG_SEND_1 =
       LINKER.downcallHandle(
           MSG_SEND_ADDR, FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS));
-  static final MethodHandle MSG_SEND_2 =
+  private static final MethodHandle MSG_SEND_2 =
       LINKER.downcallHandle(
           MSG_SEND_ADDR, FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
-  static final MethodHandle MSG_SEND_3 =
+  private static final MethodHandle MSG_SEND_3 =
       LINKER.downcallHandle(
           MSG_SEND_ADDR,
           FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
@@ -136,10 +136,10 @@ final class ObjC {
    * <p>Used when the Obj-C message has no return value (or where the return value is intentionally
    * discarded).
    */
-  static final MethodHandle MSG_SEND_VOID_0 =
+  private static final MethodHandle MSG_SEND_VOID_0 =
       LINKER.downcallHandle(MSG_SEND_ADDR, FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
 
-  static final MethodHandle MSG_SEND_VOID_1 =
+  private static final MethodHandle MSG_SEND_VOID_1 =
       LINKER.downcallHandle(MSG_SEND_ADDR, FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS));
 
   /**
