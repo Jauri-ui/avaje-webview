@@ -346,15 +346,11 @@ public final class Win32WebView extends WebviewBase {
 
   @Override
   public void setIcon(Path path) {
-    dispatchImpl(() -> Win32.setIcon(hwnd, path));
-  }
-
-  @Override
-  public void setIcon(URI uri) {
-    try {
-      setIcon(Path.of(uri));
-    } catch (final Exception ignored) {
+    final var name = path.getFileName().toString();
+    if (!name.endsWith(".ico")) {
+      throw new IllegalStateException("Win32 setIcon requires a .ico file, got: " + name);
     }
+    dispatchImpl(() -> Win32.setIcon(hwnd, path));
   }
 
   /**

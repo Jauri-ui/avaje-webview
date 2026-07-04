@@ -399,14 +399,6 @@ public final class CocoaWebView extends WebviewBase {
     dispatchImpl(() -> MacOSHelper.setIcon(path));
   }
 
-  @Override
-  public void setIcon(URI uri) {
-    try {
-      setIcon(Path.of(uri));
-    } catch (final Exception ignored) {
-    }
-  }
-
   /**
    * Called by libdispatch on the OS main thread when dispatchImpl fires. ctx is always NULL here.
    */

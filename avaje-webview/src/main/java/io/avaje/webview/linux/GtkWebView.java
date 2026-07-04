@@ -304,15 +304,6 @@ public final class GtkWebView extends WebviewBase {
     // gtk_window_set_icon_name() works with icon themes, not arbitrary paths.
   }
 
-  @Override
-  public void setIcon(URI uri) {
-    try {
-      setIcon(Path.of(uri));
-    } catch (final Exception e) {
-      // best-effort
-    }
-  }
-
   // -------------------------------------------------------------------------
   // Upcall stub targets — called FROM native code via GLib signal dispatch
   // -------------------------------------------------------------------------

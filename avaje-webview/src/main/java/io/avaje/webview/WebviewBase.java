@@ -192,11 +192,37 @@ public abstract sealed class WebviewBase implements Webview
   public abstract void setIcon(Path path);
 
   @Override
-  public abstract void setIcon(URI uri);
+  public void setIcon(URI uri) {
+    try {
+      setIcon(resolveIconPath(uri));
+    } catch (final Exception e) {
+      log.log(WARNING, "setIcon failed for URI {0}: {1}", uri, e.getMessage());
+    }
+  }
 
-  // -------------------------------------------------------------------------
-  // Platform-specific abstracts (called on the UI/GTK thread)
-  // -------------------------------------------------------------------------
+  /**
+   * Resolves a resource {@link URI} to a real filesystem {@link Path}, copying it to a temp file
+   * when the resource lives inside a jar since native icon loading (Win32 {@code LoadImageW}, Cocoa
+   * {@code NSImage}) require a file on disk.
+   */
+  protected static Path resolveIconPath(URI uri) throws IOException {
+    if ("file".equals(uri.getScheme())) {
+      return Path.of(uri);
+    }
+
+    final var uriStr = uri.toString();
+    final var slash = uriStr.lastIndexOf('/');
+    final var fileName = slash >= 0 ? uriStr.substring(slash + 1) : uriStr;
+    final var dot = fileName.lastIndexOf('.');
+    final var suffix = dot >= 0 ? fileName.substring(dot) : "";
+
+    final var tmp = Files.createTempFile("webview-icon-", suffix);
+    tmp.toFile().deleteOnExit();
+    try (var in = uri.toURL().openStream()) {
+      Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
+    }
+    return tmp;
+  }
 
   protected abstract void navigateImpl(String url);
 
@@ -214,7 +240,7 @@ public abstract sealed class WebviewBase implements Webview
 
   protected abstract void evalImpl(String js);
 
-  /** Schedule {@code r} to run on the UI/GTK thread. */
+  /** Schedule {@code r} to run on the UI thread. */
   protected abstract void dispatchImpl(Runnable r);
 
   /** Add a WebKit user script executed at document-start, top frame only. */
@@ -238,7 +264,6 @@ public abstract sealed class WebviewBase implements Webview
   }
 
   // User-script tracking
-
   private void addUserScriptInternal(String js) {
     userScripts.add(js);
     nativeAddUserScript(js);
@@ -367,9 +392,9 @@ public abstract sealed class WebviewBase implements Webview
    * <p><b>{@code Webview_.prototype.onReply}</b><br>
    * Called by Java (via {@code eval}) when a binding completes. Looks up the pending Promise by
    * {@code id}, JSON-parses the result string (Java always sends valid JSON), and either resolves
-   * or rejects. {@code status === 0} = success; anything else = the result is an error message.
-   * Parsing is guarded — if Java returns malformed JSON the Promise rejects with a descriptive
-   * error rather than silently swallowing it.
+   * or rejects. {@code status === 0} = success; anything else = the result is an error message. If
+   * Java returns malformed JSON the Promise rejects with a descriptive error rather than silently
+   * swallowing it.
    *
    * <p><b>{@code Webview_.prototype.onBind} / {@code onUnbind}</b><br>
    * Called by Java when {@link #bind} / {@link #unbind} are invoked at runtime (after the page has
