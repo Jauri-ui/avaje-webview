@@ -75,9 +75,9 @@ public final class GtkWebView extends WebviewBase {
   private final ConcurrentLinkedQueue<Runnable> pendingDispatches = new ConcurrentLinkedQueue<>();
   private final int initialWidth;
   private final int initialHeight;
-
-  public GtkWebView(boolean debug, boolean redirectConsole, int width, int height) {
-    super(redirectConsole);
+  public GtkWebView(
+      boolean debug, boolean redirectConsole, int width, int height, boolean borderless) {
+    super(redirectConsole, borderless);
     this.initialWidth = width;
     this.initialHeight = height;
     openWindows.incrementAndGet();
@@ -299,6 +299,11 @@ public final class GtkWebView extends WebviewBase {
   }
 
   @Override
+  protected void startWindowDragImpl() {
+    LinuxHelper.startWindowDrag(this);
+  }
+
+  @Override
   public void setIcon(Path path) {
     // GTK4 dropped file-based window icons; app icons are set via the .desktop file.
     // gtk_window_set_icon_name() works with icon themes, not arbitrary paths.
@@ -447,6 +452,7 @@ public final class GtkWebView extends WebviewBase {
 
   private void initWindowAndWebView(boolean debug) {
     window = Gtk4.gtkWindowNew();
+    if (borderless) Gtk4.gtkWindowSetDecorated(window, false);
     GLib.gSignalConnect(window, "destroy", destroyStub, MemorySegment.NULL);
 
     webView = WebKit6.webkitWebViewNew();
