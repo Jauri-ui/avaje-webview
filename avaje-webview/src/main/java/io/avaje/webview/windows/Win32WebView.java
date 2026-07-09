@@ -165,13 +165,25 @@ public final class Win32WebView extends WebviewBase {
 
   public Win32WebView(
       boolean debug, boolean redirectConsole, int width, int height, boolean borderless) {
-    super(redirectConsole, borderless);
+    this(debug, redirectConsole, width, height, borderless, MemorySegment.NULL);
+  }
+
+  public Win32WebView(
+      boolean debug,
+      boolean redirectConsole,
+      int width,
+      int height,
+      boolean borderless,
+      MemorySegment parentWindow) {
+    super(redirectConsole, borderless, parentWindow);
     Win32.coInitialize();
     Win32.enablePerMonitorDpiAwareness();
     buildWndProcStubs();
     createWindows();
+    if (this.parentWindow.address() != 0) Win32.enableWindow(this.parentWindow, false);
     embedWebView2(debug);
     setSizeImpl(width, height);
+    Win32.centerWindow(hwnd, this.parentWindow);
   }
 
   @Override
@@ -200,6 +212,10 @@ public final class Win32WebView extends WebviewBase {
         final var _ = (int) Win32.DestroyWindow.invokeExact(hwnd);
       } catch (final Throwable ignored) {
       }
+    }
+    if (parentWindow.address() != 0) {
+      Win32.enableWindow(parentWindow, true);
+      Win32.setForegroundWindow(parentWindow);
     }
   }
 
@@ -345,6 +361,12 @@ public final class Win32WebView extends WebviewBase {
   }
 
   @Override
+  public Webview minimizeWindow() {
+    dispatchImpl(() -> Win32.showWindow(hwnd, Win32.SW_MINIMIZE));
+    return this;
+  }
+
+  @Override
   protected void startWindowDragImpl() {
     Win32.startWindowDrag(hwnd);
   }
@@ -458,6 +480,12 @@ public final class Win32WebView extends WebviewBase {
         }
         return 0;
       }
+      case Win32.WM_NCCALCSIZE -> {
+        // When borderless, return 0 to make the entire window frame the client
+        // area. This hides the title bar and borders visually while preserving WS_OVERLAPPEDWINDOW
+        // behaviours (taskbar button, minimize/maximize/restore, snapping, DPI handling).
+        if (borderless && wParam == 1L) return 0L;
+      }
       case Win32.WM_DPICHANGED -> {
         // Windows pre-computes the correctly scaled rect and passes it in lParam.
         final var suggested = MemorySegment.ofAddress(lParam).reinterpret(16);
@@ -553,19 +581,18 @@ public final class Win32WebView extends WebviewBase {
 
       final var mainCls = "AvajeWebView_" + System.identityHashCode(this);
       registerClass(a, hInstance, mainCls, mainWndProcStub);
-      final var style = borderless ? Win32.WS_POPUP : Win32.WS_OVERLAPPEDWINDOW;
       hwnd =
           (MemorySegment)
               Win32.CreateWindowExW.invokeExact(
                   0,
                   a.allocateFrom(mainCls, StandardCharsets.UTF_16LE),
                   a.allocateFrom("", StandardCharsets.UTF_16LE),
-                  style,
+                  Win32.WS_OVERLAPPEDWINDOW,
                   Win32.CW_USEDEFAULT,
                   Win32.CW_USEDEFAULT,
                   0,
                   0,
-                  MemorySegment.NULL,
+                  parentWindow,
                   MemorySegment.NULL,
                   hInstance,
                   MemorySegment.NULL);

@@ -203,6 +203,13 @@ public interface Webview extends Closeable, Runnable {
   Webview fullscreen();
 
   /**
+   * Minimizes the webview window to the taskbar/dock.
+   *
+   * @return this Webview instance for chaining
+   */
+  Webview minimizeWindow();
+
+  /**
    * Begins a native window-move operation, as if the user had grabbed the title bar and started
    * dragging.
    *
@@ -310,6 +317,35 @@ public interface Webview extends Closeable, Runnable {
      * @return this builder
      */
     Builder borderless(boolean borderless);
+
+    /**
+     * Marks this window as owned by {@code parent}, making it behave like a modal child/dialog
+     * window.
+     *
+     * <p>The parent window is disabled (blocked from receiving mouse/keyboard input) as soon as
+     * this window is built, and automatically re-enabled when this window closes.
+     *
+     * @param parent the {@code Webview} that should be blocked while this window is open
+     * @return this builder
+     */
+    Builder parent(Webview parent);
+
+    /**
+     * Maximizes the window immediately after it is shown. Defaults to {@code false}.
+     *
+     * @param maximize {@code true} to start maximized
+     * @return this builder
+     */
+    Builder maximize(boolean maximize);
+
+    /**
+     * Switches the window to fullscreen immediately after it is shown. Defaults to {@code false}.
+     * Takes precedence over {@link #maximize(boolean)} when both are set.
+     *
+     * @param fullscreen {@code true} to start fullscreen
+     * @return this builder
+     */
+    Builder fullscreen(boolean fullscreen);
 
     /**
      * Builds a Webview using the configuration

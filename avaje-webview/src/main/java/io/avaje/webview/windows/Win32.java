@@ -49,6 +49,7 @@ final class Win32 {
   private static final SymbolLookup OLE32 = SymbolLookup.libraryLookup("ole32", Arena.global());
 
   // Window style / message constants
+  static final int WS_EX_APPWINDOW = 0x00040000;
   static final int WS_OVERLAPPEDWINDOW = 0x00CF0000;
   static final int WS_POPUP = 0x80000000;
   static final int WS_CHILD = 0x40000000;
@@ -61,16 +62,19 @@ final class Win32 {
   static final int SW_HIDE = 0;
   static final int SW_SHOW = 5;
   static final int SW_MAXIMIZE = 3;
+  static final int SW_MINIMIZE = 6;
   static final int WM_DESTROY = 0x0002;
   static final int WM_CLOSE = 0x0010;
   static final int WM_SIZE = 0x0005;
   static final int WM_QUIT = 0x0012;
   static final int WM_ACTIVATE = 0x0006;
   static final int WM_GETMINMAXINFO = 0x0024;
+  static final int WM_NCCALCSIZE = 0x0083;
   static final int WM_SETTINGCHANGE = 0x001A;
   static final int WM_APP = 0x8000;
   static final int WA_INACTIVE = 0;
   static final int GWL_STYLE = -16;
+  static final int SWP_NOSIZE = 0x0001;
   static final int SWP_NOMOVE = 0x0002;
   static final int SWP_NOZORDER = 0x0004;
   static final int SWP_NOACTIVATE = 0x0010;
@@ -253,6 +257,22 @@ final class Win32 {
       downcall(USER32, "SetFocus", FunctionDescriptor.of(ADDRESS, ADDRESS));
 
   /**
+   * {@code EnableWindow(hWnd, bEnable) -> BOOL}
+   *
+   * <p>Enables or disables mouse/keyboard input to a window. Used to block interaction with a
+   * parent window while an owned (modal-style) child window is open.
+   */
+  static final MethodHandle EnableWindow =
+      downcall(USER32, "EnableWindow", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
+
+  /**
+   * {@code SetForegroundWindow(hWnd) -> BOOL}. Brings the window to the foreground and activates
+   * it. Used to restore focus to the parent window after a modal-style child window closes.
+   */
+  static final MethodHandle SetForegroundWindow =
+      downcall(USER32, "SetForegroundWindow", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /**
    * {@code GetClientRect(hWnd, lpRect) -> BOOL}
    *
    * <p>Fills a {@link #RECT_LAYOUT} buffer with the client-area dimensions of {@code hWnd}. Client
@@ -261,6 +281,15 @@ final class Win32 {
    */
   static final MethodHandle GetClientRect =
       downcall(USER32, "GetClientRect", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+
+  /**
+   * {@code GetWindowRect(hWnd, lpRect) -> BOOL}
+   *
+   * <p>Fills a {@link #RECT_LAYOUT} buffer with the screen coordinates of the window, including
+   * non-client area (title bar, borders). Used to determine the full window size for centering.
+   */
+  static final MethodHandle GetWindowRect =
+      downcall(USER32, "GetWindowRect", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
 
   /**
    * {@code SetWindowPos(hWnd, hWndInsertAfter, X, Y, cx, cy, uFlags) -> BOOL}
@@ -522,11 +551,68 @@ final class Win32 {
     }
   }
 
+  /**
+   * Enables or disables mouse/keyboard input to {@code hwnd}. Passing {@code false} blocks the
+   * window from receiving input (clicks produce the system "ding") until re-enabled.
+   */
+  static void enableWindow(MemorySegment hwnd, boolean enable) {
+    try {
+      final var _ = (int) EnableWindow.invokeExact(hwnd, enable ? 1 : 0);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** Brings {@code hwnd} to the foreground and activates it. */
+  static void setForegroundWindow(MemorySegment hwnd) {
+    try {
+      final var _ = (int) SetForegroundWindow.invokeExact(hwnd);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
   /** Sets the title bar text of {@code hwnd} to {@code title} (UTF-16LE encoded). */
   static void setWindowText(MemorySegment hwnd, String title) {
     try (var a = Arena.ofConfined()) {
       final var _ =
           (int) SetWindowTextW.invokeExact(hwnd, a.allocateFrom(title, StandardCharsets.UTF_16LE));
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Centers {@code hwnd} relative to {@code parentHwnd} when it is non-null, or relative to the
+   * primary screen when {@code parentHwnd} is null/zero. Called once after initial sizing so that
+   * the window appears at the expected position when it is first shown.
+   */
+  static void centerWindow(MemorySegment hwnd, MemorySegment parentHwnd) {
+    try (var a = Arena.ofConfined()) {
+      final var winRect = a.allocate(RECT_LAYOUT);
+      final var _ = (int) GetWindowRect.invokeExact(hwnd, winRect);
+      final int w = winRect.get(JAVA_INT, 8) - winRect.get(JAVA_INT, 0);
+      final int h = winRect.get(JAVA_INT, 12) - winRect.get(JAVA_INT, 4);
+      final int refX, refY, refW, refH;
+      if (parentHwnd.address() != 0) {
+        final var parentRect = a.allocate(RECT_LAYOUT);
+        final var _ = (int) GetWindowRect.invokeExact(parentHwnd, parentRect);
+        refX = parentRect.get(JAVA_INT, 0);
+        refY = parentRect.get(JAVA_INT, 4);
+        refW = parentRect.get(JAVA_INT, 8) - refX;
+        refH = parentRect.get(JAVA_INT, 12) - refY;
+      } else {
+        refX = 0;
+        refY = 0;
+        refW = (int) GetSystemMetrics.invokeExact(SM_CXSCREEN);
+        refH = (int) GetSystemMetrics.invokeExact(SM_CYSCREEN);
+      }
+      final int x = refX + (refW - w) / 2;
+      final int y = refY + (refH - h) / 2;
+      final var _ =
+          (int)
+              SetWindowPos.invokeExact(
+                  hwnd, MemorySegment.NULL, x, y, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }

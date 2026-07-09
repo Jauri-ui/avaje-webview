@@ -8,7 +8,6 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
-import java.net.URI;
 import java.nio.file.Path;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
@@ -75,9 +74,20 @@ public final class GtkWebView extends WebviewBase {
   private final ConcurrentLinkedQueue<Runnable> pendingDispatches = new ConcurrentLinkedQueue<>();
   private final int initialWidth;
   private final int initialHeight;
+
   public GtkWebView(
       boolean debug, boolean redirectConsole, int width, int height, boolean borderless) {
-    super(redirectConsole, borderless);
+    this(debug, redirectConsole, width, height, borderless, MemorySegment.NULL);
+  }
+
+  public GtkWebView(
+      boolean debug,
+      boolean redirectConsole,
+      int width,
+      int height,
+      boolean borderless,
+      MemorySegment parentWindow) {
+    super(redirectConsole, borderless, parentWindow);
     this.initialWidth = width;
     this.initialHeight = height;
     openWindows.incrementAndGet();
@@ -169,6 +179,9 @@ public final class GtkWebView extends WebviewBase {
     // We cannot close it here: this method runs inside drainDispatchQueue (an upcall stub in the
     // arena), so closing now would free memory the stub is still executing from.
     pendingArenaClose.add(callbackArena);
+    if (parentWindow.address() != 0L) {
+      Gtk4.gtkWidgetSetSensitive(parentWindow, true);
+    }
   }
 
   @Override
@@ -295,6 +308,12 @@ public final class GtkWebView extends WebviewBase {
   @Override
   public Webview fullscreen() {
     dispatchImpl(() -> LinuxHelper.fullscreen(this));
+    return this;
+  }
+
+  @Override
+  public Webview minimizeWindow() {
+    dispatchImpl(() -> LinuxHelper.minimizeWindow(this));
     return this;
   }
 
@@ -454,6 +473,11 @@ public final class GtkWebView extends WebviewBase {
     window = Gtk4.gtkWindowNew();
     if (borderless) Gtk4.gtkWindowSetDecorated(window, false);
     GLib.gSignalConnect(window, "destroy", destroyStub, MemorySegment.NULL);
+    if (parentWindow.address() != 0L) {
+      Gtk4.gtkWindowSetTransientFor(window, parentWindow);
+      Gtk4.gtkWindowSetModal(window, true);
+      Gtk4.gtkWidgetSetSensitive(parentWindow, false);
+    }
 
     webView = WebKit6.webkitWebViewNew();
     // webkit_web_view_new() returns a GObject with a floating reference (refcount=1, floating flag

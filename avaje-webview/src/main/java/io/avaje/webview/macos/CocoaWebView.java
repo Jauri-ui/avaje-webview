@@ -109,6 +109,20 @@ public final class CocoaWebView extends WebviewBase {
    */
   private static final MethodHandle DISPATCH_ASYNC_F;
 
+  /**
+   * {@code dispatch_time(dispatch_time_t when, int64_t delta) -> dispatch_time_t}. {@code
+   * DISPATCH_TIME_NOW} is {@code 0}; {@code delta} is nanoseconds from that base. Used to compute
+   * the deadline for {@link #DISPATCH_AFTER_F}.
+   */
+  private static final MethodHandle DISPATCH_TIME;
+
+  /**
+   * {@code dispatch_after_f(dispatch_time_t when, dispatch_queue_t queue, void* context,
+   * dispatch_function_t work)}. Same {@code void(*)(void*)} C-function-pointer shape as {@link
+   * #DISPATCH_ASYNC_F}, just deferred to a deadline .
+   */
+  private static final MethodHandle DISPATCH_AFTER_F;
+
   // NSApplication is a process singleton; only init once across all CocoaWebView instances.
   private static volatile boolean nsAppInitDone = false;
   private static final AtomicInteger openWindows = new AtomicInteger(0);
@@ -139,11 +153,27 @@ public final class CocoaWebView extends WebviewBase {
             lookup.find("dispatch_async_f").orElseThrow(),
             FunctionDescriptor.ofVoid(
                 ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+    DISPATCH_TIME =
+        linker.downcallHandle(
+            lookup.find("dispatch_time").orElseThrow(),
+            FunctionDescriptor.of(
+                ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG));
+    DISPATCH_AFTER_F =
+        linker.downcallHandle(
+            lookup.find("dispatch_after_f").orElseThrow(),
+            FunctionDescriptor.ofVoid(
+                ValueLayout.JAVA_LONG,
+                ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS,
+                ValueLayout.ADDRESS));
   }
 
   private volatile MemorySegment nsWindow; // NSWindow*
   private volatile MemorySegment wkWebView; // WKWebView*
   private volatile MemorySegment ucController; // WKUserContentController*
+
+  /** Intercepts clicks intended for the parent and redirects them into a flash of this window */
+  private volatile MemorySegment parentClickGuard = MemorySegment.NULL;
 
   private volatile boolean closed = false;
   private final AtomicBoolean windowClosed = new AtomicBoolean(false);
@@ -157,9 +187,20 @@ public final class CocoaWebView extends WebviewBase {
   // C function pointer (upcall stub) passed to dispatch_async_f to drain the pending queue
   private MemorySegment drainStub;
   private final ConcurrentLinkedQueue<Runnable> pendingDispatches = new ConcurrentLinkedQueue<>();
+
   public CocoaWebView(
       boolean debug, boolean redirectConsole, int width, int height, boolean borderless) {
-    super(redirectConsole, borderless);
+    this(debug, redirectConsole, width, height, borderless, MemorySegment.NULL);
+  }
+
+  public CocoaWebView(
+      boolean debug,
+      boolean redirectConsole,
+      int width,
+      int height,
+      boolean borderless,
+      MemorySegment parentWindow) {
+    super(redirectConsole, borderless, parentWindow);
     openWindows.incrementAndGet();
     buildDrainStub();
 
@@ -349,6 +390,30 @@ public final class CocoaWebView extends WebviewBase {
     }
   }
 
+  /**
+   * Runs {@code r} on the main thread after {@code delayMillis}. Unlike {@link #dispatchImpl},
+   * which drains a shared FIFO queue immediately, this builds a one-off upcall stub per call so the
+   * delay is honored precisely.
+   */
+  private void dispatchAfterImpl(long delayMillis, Runnable r) {
+    try {
+      final var when = (long) DISPATCH_TIME.invokeExact(0L, delayMillis * 1_000_000L);
+      final var runIt =
+          MethodHandles.lookup()
+              .findVirtual(Runnable.class, "run", MethodType.methodType(void.class))
+              .bindTo(r);
+      final var stub =
+          Linker.nativeLinker()
+              .upcallStub(
+                  MethodHandles.dropArguments(runIt, 0, MemorySegment.class),
+                  FunctionDescriptor.ofVoid(ValueLayout.ADDRESS),
+                  callbackArena);
+      DISPATCH_AFTER_F.invokeExact(when, DISPATCH_MAIN_QUEUE, MemorySegment.NULL, stub);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
   @Override
   protected void nativeAddUserScript(String js) {
     if (closed) return;
@@ -390,6 +455,12 @@ public final class CocoaWebView extends WebviewBase {
   @Override
   public Webview fullscreen() {
     dispatchImpl(() -> MacOSHelper.fullscreen(nsWindow));
+    return this;
+  }
+
+  @Override
+  public Webview minimizeWindow() {
+    dispatchImpl(() -> MacOSHelper.minimize(nsWindow));
     return this;
   }
 
@@ -453,6 +524,13 @@ public final class CocoaWebView extends WebviewBase {
   public void onWindowWillClose(MemorySegment self, MemorySegment cmd, MemorySegment notification) {
     if (!windowClosed.compareAndSet(false, true)) return;
     closed = true;
+    if (parentWindow.address() != 0) {
+      MacOSHelper.removeChildWindow(parentWindow, nsWindow);
+      MacOSHelper.removeClickGuard(parentClickGuard);
+      try (var a = Arena.ofConfined()) {
+        sendVoid1(parentWindow, sel(a, "makeKeyAndOrderFront:"), MemorySegment.NULL);
+      }
+    }
     if (openWindows.decrementAndGet() == 0) {
       try (var a = Arena.ofConfined()) {
         final var app = send0(ObjC.getClass(a, "NSApplication"), sel(a, "sharedApplication"));
@@ -460,6 +538,26 @@ public final class CocoaWebView extends WebviewBase {
       }
     }
     windowClosedLatch.countDown();
+  }
+
+  /**
+   * Called by the click-guard overlay view (see {@link #createClickGuardView}) when the user clicks
+   * anywhere on {@link #parentWindow} while this window owns it. Does not forward the click - the
+   * guard view swallows it by never calling {@code super} - and instead flashes this window so the
+   * user notices it needs attention.
+   */
+  @SuppressWarnings("unused")
+  public void onParentClickBlocked(MemorySegment self, MemorySegment cmd, MemorySegment event) {
+    flashChildWindow();
+  }
+
+  /** Brings this window to the front and briefly dips/restores its opacity as a "flash" cue. */
+  private void flashChildWindow() {
+    try (var a = Arena.ofConfined()) {
+      sendVoid1(nsWindow, sel(a, "makeKeyAndOrderFront:"), MemorySegment.NULL);
+    }
+    MacOSHelper.setAlphaValue(nsWindow, 0.35d);
+    dispatchAfterImpl(140L, () -> MacOSHelper.setAlphaValue(nsWindow, 1.0d));
   }
 
   /**
@@ -610,14 +708,27 @@ public final class CocoaWebView extends WebviewBase {
                   0d,
                   (double) width,
                   (double) height,
-                  borderless ? NS_RESIZABLE : NS_STANDARD_WINDOW_MASK,
+                  borderless ? NS_RESIZABLE | NS_MINIATURIZABLE : NS_STANDARD_WINDOW_MASK,
                   NS_BACKING_BUFFERED,
                   0 /* defer=NO */);
+
+      if (parentWindow.address() != 0) {
+        MacOSHelper.centerOnParent(nsWindow, parentWindow);
+      } else {
+        MacOSHelper.center(nsWindow);
+      }
 
       sendVoid1(nsWindow, sel(a, "setDelegate:"), createWindowDelegate(a));
       sendVoid1(nsWindow, sel(a, "setContentView:"), wkWebView);
       // Navigation delegate shows the window once the first page finishes loading.
       sendVoid1(wkWebView, sel(a, "setNavigationDelegate:"), createNavigationDelegate(a));
+
+      if (parentWindow.address() != 0) {
+        MacOSHelper.addChildWindow(parentWindow, nsWindow);
+        parentClickGuard = createClickGuardView(a);
+        MacOSHelper.installFillAutoresizeMask(parentClickGuard);
+        MacOSHelper.attachClickGuard(parentWindow, parentClickGuard);
+      }
 
       setupJsBridge(POST_FN);
       // Window is shown from onNavigationFinished when the first page load completes.
@@ -710,6 +821,55 @@ public final class CocoaWebView extends WebviewBase {
 
       REGISTER_CLASS_PAIR.invokeExact(cls);
       return (MemorySegment) CLASS_CREATE_INSTANCE.invokeExact(cls, 0L);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Synthesizes an {@code NSView} subclass whose {@code mouseDown:}/{@code rightMouseDown:} both
+   * call back into {@link #onParentClickBlocked} and never invoke {@code super} - so the click
+   * never reaches whatever real content is underneath. An instance of this class is installed as an
+   * overlay over {@link #parentWindow}'s content view for as long as this window is open.
+   */
+  private MemorySegment createClickGuardView(Arena a) {
+    try {
+      final var superCls = ObjC.getClass(a, "NSView");
+      final var clsName = "JavaWebviewClickGuard_" + System.identityHashCode(this);
+      final var cls =
+          (MemorySegment) ALLOC_CLASS_PAIR.invokeExact(superCls, a.allocateFrom(clsName), 0L);
+
+      final var mh =
+          MethodHandles.lookup()
+              .findVirtual(
+                  CocoaWebView.class,
+                  "onParentClickBlocked",
+                  MethodType.methodType(
+                      void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class))
+              .bindTo(this);
+      final var stub =
+          Linker.nativeLinker()
+              .upcallStub(
+                  mh,
+                  FunctionDescriptor.ofVoid(
+                      ValueLayout.ADDRESS, // self
+                      ValueLayout.ADDRESS, // cmd
+                      ValueLayout.ADDRESS), // NSEvent*
+                  callbackArena);
+
+      final var _ =
+          (byte)
+              CLASS_ADD_METHOD.invokeExact(cls, sel(a, "mouseDown:"), stub, a.allocateFrom("v@:@"));
+      final var _ =
+          (byte)
+              CLASS_ADD_METHOD.invokeExact(
+                  cls, sel(a, "rightMouseDown:"), stub, a.allocateFrom("v@:@"));
+
+      REGISTER_CLASS_PAIR.invokeExact(cls);
+      final var raw = (MemorySegment) CLASS_CREATE_INSTANCE.invokeExact(cls, 0L);
+      return (MemorySegment)
+          ObjC.MSG_SEND_INIT_WITH_FRAME.invokeExact(
+              raw, sel(a, "initWithFrame:"), 0d, 0d, 100_000d, 100_000d);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }

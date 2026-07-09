@@ -1,5 +1,7 @@
 package io.avaje.webview.macos;
 
+import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
+
 import static io.avaje.webview.macos.ObjC.fromNSString;
 import static io.avaje.webview.macos.ObjC.nsString;
 import static io.avaje.webview.macos.ObjC.sel;
@@ -58,6 +60,12 @@ final class MacOSHelper {
     }
   }
 
+  static void minimize(MemorySegment nsWindow) {
+    try (var a = Arena.ofConfined()) {
+      sendVoid1(nsWindow, sel(a, "miniaturize:"), MemorySegment.NULL);
+    }
+  }
+
   /**
    * Begins a native window-move operation for {@code nsWindow}, as if the user had grabbed the
    * title bar, using the current NSEvent ({@code [NSApp currentEvent]}) as the originating mouse
@@ -68,6 +76,123 @@ final class MacOSHelper {
       final var app = send0(ObjC.getClass(a, "NSApplication"), sel(a, "sharedApplication"));
       final var event = send0(app, sel(a, "currentEvent"));
       sendVoid1(nsWindow, sel(a, "performWindowDragWithEvent:"), event);
+    }
+  }
+
+  /**
+   * {@code -[NSWindow addChildWindow:ordered:]} - attaches {@code childWindow} to {@code
+   * parentWindow} so the window manager keeps it stacked above the parent and moves it together.
+   * {@code ordered = NSWindowAbove (1)}.
+   */
+  static void addChildWindow(MemorySegment parentWindow, MemorySegment childWindow) {
+    try (var a = Arena.ofConfined()) {
+      Linker.nativeLinker()
+          .downcallHandle(
+              ObjC.MSG_SEND_ADDR,
+              FunctionDescriptor.ofVoid(
+                  ValueLayout.ADDRESS,
+                  ValueLayout.ADDRESS,
+                  ValueLayout.ADDRESS,
+                  ValueLayout.JAVA_LONG))
+          .invokeExact(
+              parentWindow, sel(a, "addChildWindow:ordered:"), childWindow, 1L /* NSWindowAbove */);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * {@code -[NSWindow removeChildWindow:]} - detaches a window added via {@link #addChildWindow}.
+   */
+  static void removeChildWindow(MemorySegment parentWindow, MemorySegment childWindow) {
+    try (var a = Arena.ofConfined()) {
+      sendVoid1(parentWindow, sel(a, "removeChildWindow:"), childWindow);
+    }
+  }
+
+  /**
+   * {@code -[NSWindow setAlphaValue:]} - sets window opacity (0.0-1.0). Used to briefly dip and
+   * restore a child window's opacity to "flash" it when the user clicks its disabled parent.
+   */
+  static void setAlphaValue(MemorySegment window, double alpha) {
+    try (var a = Arena.ofConfined()) {
+      Linker.nativeLinker()
+          .downcallHandle(
+              ObjC.MSG_SEND_ADDR,
+              FunctionDescriptor.ofVoid(
+                  ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_DOUBLE))
+          .invokeExact(window, sel(a, "setAlphaValue:"), alpha);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * {@code -[NSWindow center]} - centers {@code window} on the screen it mostly occupies. Without
+   * this, {@code initWithContentRect:} leaves the window at its raw origin, which is the
+   * bottom-left corner of the main screen in Cocoa's coordinate system.
+   */
+  static void center(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      sendVoid0(window, sel(a, "center"));
+    }
+  }
+
+  /**
+   * Centers {@code nsWindow} relative to {@code parentWindow} by reading both frames and computing
+   * the origin that places the child at the center of the parent.
+   */
+  static void centerOnParent(MemorySegment nsWindow, MemorySegment parentWindow) {
+    try (var a = Arena.ofConfined()) {
+      final var frameSel = sel(a, "frame");
+      final var pFrame = (MemorySegment) ObjC.MSG_SEND_GET_FRAME.invokeExact(parentWindow, frameSel);
+      final var cFrame = (MemorySegment) ObjC.MSG_SEND_GET_FRAME.invokeExact(nsWindow, frameSel);
+      final double pX = pFrame.get(JAVA_DOUBLE, 0);
+      final double pY = pFrame.get(JAVA_DOUBLE, 8);
+      final double pW = pFrame.get(JAVA_DOUBLE, 16);
+      final double pH = pFrame.get(JAVA_DOUBLE, 24);
+      final double cW = cFrame.get(JAVA_DOUBLE, 16);
+      final double cH = cFrame.get(JAVA_DOUBLE, 24);
+      ObjC.MSG_SEND_SET_SIZE.invokeExact(
+          nsWindow, sel(a, "setFrameOrigin:"), pX + (pW - cW) / 2, pY + (pH - cH) / 2);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Installs a fill autoresizing mask on {@code view} (already created with an oversized frame -
+   * see {@link ObjC#MSG_SEND_INIT_WITH_FRAME}) so it keeps covering the parent as it resizes.
+   * {@code NSViewWidthSizable (1<<1) | NSViewHeightSizable (1<<4) = 18}.
+   */
+  static void installFillAutoresizeMask(MemorySegment view) {
+    try (var a = Arena.ofConfined()) {
+      Linker.nativeLinker()
+          .downcallHandle(
+              ObjC.MSG_SEND_ADDR,
+              FunctionDescriptor.ofVoid(
+                  ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG))
+          .invokeExact(view, sel(a, "setAutoresizingMask:"), 18L);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Adds {@code guardView} as the frontmost subview of {@code window}'s content view, so it
+   * intercepts every click before the real content underneath sees it.
+   */
+  static void attachClickGuard(MemorySegment window, MemorySegment guardView) {
+    try (var a = Arena.ofConfined()) {
+      final var contentView = send0(window, sel(a, "contentView"));
+      sendVoid1(contentView, sel(a, "addSubview:"), guardView);
+    }
+  }
+
+  /** Detaches a guard view added via {@link #attachClickGuard}. */
+  static void removeClickGuard(MemorySegment guardView) {
+    try (var a = Arena.ofConfined()) {
+      sendVoid0(guardView, sel(a, "removeFromSuperview"));
     }
   }
 
