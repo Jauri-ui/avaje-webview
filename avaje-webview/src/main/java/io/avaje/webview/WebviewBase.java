@@ -72,11 +72,14 @@ public abstract sealed class WebviewBase implements Webview
 
   private final boolean redirectConsole;
   protected final boolean borderless;
+  protected final boolean outline;
   protected final MemorySegment parentWindow;
 
-  protected WebviewBase(boolean redirectConsole, boolean borderless, MemorySegment parentWindow) {
+  protected WebviewBase(
+      boolean redirectConsole, boolean borderless, boolean outline, MemorySegment parentWindow) {
     this.redirectConsole = redirectConsole;
     this.borderless = borderless;
+    this.outline = outline;
     this.parentWindow = parentWindow != null ? parentWindow : MemorySegment.NULL;
   }
 

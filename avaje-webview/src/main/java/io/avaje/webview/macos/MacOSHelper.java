@@ -145,7 +145,8 @@ final class MacOSHelper {
   static void centerOnParent(MemorySegment nsWindow, MemorySegment parentWindow) {
     try (var a = Arena.ofConfined()) {
       final var frameSel = sel(a, "frame");
-      final var pFrame = (MemorySegment) ObjC.MSG_SEND_GET_FRAME.invokeExact(parentWindow, frameSel);
+      final var pFrame =
+          (MemorySegment) ObjC.MSG_SEND_GET_FRAME.invokeExact(parentWindow, frameSel);
       final var cFrame = (MemorySegment) ObjC.MSG_SEND_GET_FRAME.invokeExact(nsWindow, frameSel);
       final double pX = pFrame.get(JAVA_DOUBLE, 0);
       final double pY = pFrame.get(JAVA_DOUBLE, 8);

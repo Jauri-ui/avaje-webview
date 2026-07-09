@@ -116,7 +116,8 @@ class JsonTest {
     // chars > 127 become unicode escapes — unlike C++ which leaves UTF-8 bytes as-is
     // use concatenation to avoid Java unicode-escape processing in string literals
     assertEquals("\\" + "u2328", WebviewUtil.jsonEscape("⌨"));
-    final var expected = """
+    final var expected =
+        """
   	\\\
   	u30d5\
   	\\\

@@ -68,6 +68,8 @@ public final class CocoaWebView extends WebviewBase {
   private static final long NS_RESIZABLE = 8L;
   private static final long NS_STANDARD_WINDOW_MASK =
       NS_TITLED | NS_CLOSABLE | NS_MINIATURIZABLE | NS_RESIZABLE;
+  // NSWindowStyleMaskFullSizeContentView: content view extends under the title bar
+  private static final long NS_FULL_SIZE_CONTENT_VIEW = 0x8000L;
 
   /**
    * NSBackingStoreBuffered = 2 - the only backing store type on modern macOS.
@@ -189,18 +191,14 @@ public final class CocoaWebView extends WebviewBase {
   private final ConcurrentLinkedQueue<Runnable> pendingDispatches = new ConcurrentLinkedQueue<>();
 
   public CocoaWebView(
-      boolean debug, boolean redirectConsole, int width, int height, boolean borderless) {
-    this(debug, redirectConsole, width, height, borderless, MemorySegment.NULL);
-  }
-
-  public CocoaWebView(
       boolean debug,
       boolean redirectConsole,
       int width,
       int height,
       boolean borderless,
+      boolean outline,
       MemorySegment parentWindow) {
-    super(redirectConsole, borderless, parentWindow);
+    super(redirectConsole, borderless, outline, parentWindow);
     openWindows.incrementAndGet();
     buildDrainStub();
 
@@ -699,6 +697,16 @@ public final class CocoaWebView extends WebviewBase {
 
       // NS_BACKING_BUFFERED is the only backing type that works on modern macOS.
       // defer=0 (NO) means create the window now rather than lazily when first displayed.
+      final long styleMask;
+      if (borderless && outline) {
+        // Full-size content view keeps the native shadow and border while the title bar
+        // is made transparent and hidden below, so content extends to the window top.
+        styleMask = NS_STANDARD_WINDOW_MASK | NS_FULL_SIZE_CONTENT_VIEW;
+      } else if (borderless) {
+        styleMask = NS_RESIZABLE | NS_MINIATURIZABLE;
+      } else {
+        styleMask = NS_STANDARD_WINDOW_MASK;
+      }
       nsWindow =
           (MemorySegment)
               MSG_SEND_NSWINDOW_INIT.invokeExact(
@@ -708,9 +716,47 @@ public final class CocoaWebView extends WebviewBase {
                   0d,
                   (double) width,
                   (double) height,
-                  borderless ? NS_RESIZABLE | NS_MINIATURIZABLE : NS_STANDARD_WINDOW_MASK,
+                  styleMask,
                   NS_BACKING_BUFFERED,
                   0 /* defer=NO */);
+      if (borderless && outline) {
+        // Make the title bar transparent so web content renders underneath it.
+        Linker.nativeLinker()
+            .downcallHandle(
+                ObjC.MSG_SEND_ADDR,
+                FunctionDescriptor.ofVoid(
+                    ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT))
+            .invokeExact(nsWindow, sel(a, "setTitlebarAppearsTransparent:"), 1);
+        // Hide the title text.
+        Linker.nativeLinker()
+            .downcallHandle(
+                ObjC.MSG_SEND_ADDR,
+                FunctionDescriptor.ofVoid(
+                    ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG))
+            .invokeExact(nsWindow, sel(a, "setTitleVisibility:"), 1L /* NSWindowTitleHidden */);
+        // Hide the close / miniaturise / zoom traffic-light buttons.
+        final var buttonMh =
+            Linker.nativeLinker()
+                .downcallHandle(
+                    ObjC.MSG_SEND_ADDR,
+                    FunctionDescriptor.of(
+                        ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS,
+                        ValueLayout.JAVA_LONG));
+        final var hideMh =
+            Linker.nativeLinker()
+                .downcallHandle(
+                    ObjC.MSG_SEND_ADDR,
+                    FunctionDescriptor.ofVoid(
+                        ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
+        final var stdBtn = sel(a, "standardWindowButton:");
+        final var setHidden = sel(a, "setHidden:");
+        for (long btn = 0L; btn <= 2L; btn++) {
+          final var button = (MemorySegment) buttonMh.invokeExact(nsWindow, stdBtn, btn);
+          if (button.address() != 0) hideMh.invokeExact(button, setHidden, 1);
+        }
+      }
 
       if (parentWindow.address() != 0) {
         MacOSHelper.centerOnParent(nsWindow, parentWindow);

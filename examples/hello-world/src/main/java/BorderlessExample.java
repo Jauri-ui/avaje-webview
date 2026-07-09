@@ -80,7 +80,7 @@ void main() {
           .title("Borderless")
           .width(500)
           .height(300)
-          .borderless(true)
+          .borderless(true, true)
           .resizable(false)
           .html(HTML)
           .build();

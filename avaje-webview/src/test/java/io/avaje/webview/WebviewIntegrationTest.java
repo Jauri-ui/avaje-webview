@@ -498,8 +498,10 @@ class WebviewIntegrationTest {
     final var sb = new StringBuilder();
     sb.append("<!DOCTYPE html><html><body>");
     for (int i = 0; i < 10_000; i++) {
-      sb.append("<p>Paragraph ").append(i)
-          .append(" — padding content to make this payload large enough to exercise the IPC path.</p>");
+      sb.append("<p>Paragraph ")
+          .append(i)
+          .append(
+              " — padding content to make this payload large enough to exercise the IPC path.</p>");
     }
     sb.append("<script>window.largeContentLoaded();</script></body></html>");
 
@@ -524,8 +526,10 @@ class WebviewIntegrationTest {
     final var sb = new StringBuilder();
     sb.append("<!DOCTYPE html><html><body>");
     for (int i = 0; i < 10_000; i++) {
-      sb.append("<p>Paragraph ").append(i)
-          .append(" — padding content to make this file large enough to exercise the IPC path.</p>");
+      sb.append("<p>Paragraph ")
+          .append(i)
+          .append(
+              " — padding content to make this file large enough to exercise the IPC path.</p>");
     }
     sb.append("<script>window.largeFileLoaded();</script></body></html>");
 
@@ -586,8 +590,10 @@ class WebviewIntegrationTest {
     final var sb = new StringBuilder();
     sb.append("<!DOCTYPE html><html><body>");
     for (int i = 0; i < 10_000; i++) {
-      sb.append("<p>Paragraph ").append(i)
-          .append(" — padding content to make this file large enough to exercise the IPC path.</p>");
+      sb.append("<p>Paragraph ")
+          .append(i)
+          .append(
+              " — padding content to make this file large enough to exercise the IPC path.</p>");
     }
     sb.append("<script>window.largeFileNavLoaded();</script></body></html>");
 

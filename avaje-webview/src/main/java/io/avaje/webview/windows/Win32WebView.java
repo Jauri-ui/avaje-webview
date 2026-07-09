@@ -164,18 +164,14 @@ public final class Win32WebView extends WebviewBase {
   private MemorySegment cachedQI, cachedAddRef, cachedRelease;
 
   public Win32WebView(
-      boolean debug, boolean redirectConsole, int width, int height, boolean borderless) {
-    this(debug, redirectConsole, width, height, borderless, MemorySegment.NULL);
-  }
-
-  public Win32WebView(
       boolean debug,
       boolean redirectConsole,
       int width,
       int height,
       boolean borderless,
+      boolean outline,
       MemorySegment parentWindow) {
-    super(redirectConsole, borderless, parentWindow);
+    super(redirectConsole, borderless, outline, parentWindow);
     Win32.coInitialize();
     Win32.enablePerMonitorDpiAwareness();
     buildWndProcStubs();
@@ -481,10 +477,24 @@ public final class Win32WebView extends WebviewBase {
         return 0;
       }
       case Win32.WM_NCCALCSIZE -> {
-        // When borderless, return 0 to make the entire window frame the client
-        // area. This hides the title bar and borders visually while preserving WS_OVERLAPPEDWINDOW
-        // behaviours (taskbar button, minimize/maximize/restore, snapping, DPI handling).
-        if (borderless && wParam == 1L) return 0L;
+        if (borderless && wParam == 1L) {
+          if (outline) {
+            // Outline mode: remove only the title bar, keep the side and bottom borders.
+            final var ncp = MemorySegment.ofAddress(lParam).reinterpret(48);
+            final var windowTop = ncp.get(JAVA_INT, 4); // rgrc[0].top = window top
+            try {
+              final var _ = (long) Win32.DefWindowProcW.invokeExact(hWnd, msg, wParam, lParam);
+            } catch (final Throwable ignored) {
+            }
+            // Restore top so the client area extends to the window top (no title bar gap),
+            // while left/right/bottom remain as computed (keeps the visible border pixels).
+            ncp.set(JAVA_INT, 4, windowTop);
+          }
+          // Standard borderless: absorb the entire NC area into client.
+          // This hides the title bar and borders while preserving WS_OVERLAPPEDWINDOW
+          // behaviours (taskbar button, minimize/maximize/restore, snapping, DPI handling).
+          return 0L;
+        }
       }
       case Win32.WM_DPICHANGED -> {
         // Windows pre-computes the correctly scaled rect and passes it in lParam.

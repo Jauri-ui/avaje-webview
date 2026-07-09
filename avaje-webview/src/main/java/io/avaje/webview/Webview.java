@@ -319,6 +319,27 @@ public interface Webview extends Closeable, Runnable {
     Builder borderless(boolean borderless);
 
     /**
+     * Creates the window without native OS decorations, with optional retention of the native
+     * window outline (drop shadow and thin border).
+     *
+     * <p>When {@code outline} is {@code true}, only the title bar is removed; the surrounding
+     * border and drop shadow remain visible. Platform behaviour:
+     *
+     * <ul>
+     *   <li><b>Windows</b> removes only the title bar area; the left, right, and bottom borders
+     *       remain, preserving the DWM drop shadow and 1-px outline.
+     *   <li><b>macOS</b> uses a transparent, hidden title bar so the native window shadow and
+     *       border are retained while web content covers the full window area.
+     *   <li>on <b>Linux</b> this has no effect.
+     * </ul>
+     *
+     * @param borderless {@code true} to remove native window decorations
+     * @param outline {@code true} to keep the native window outline when borderless
+     * @return this builder
+     */
+    Builder borderless(boolean borderless, boolean outline);
+
+    /**
      * Marks this window as owned by {@code parent}, making it behave like a modal child/dialog
      * window.
      *
@@ -351,8 +372,8 @@ public interface Webview extends Closeable, Runnable {
      * Controls whether the user can resize the window. Defaults to {@code true}.
      *
      * <p>When set to {@code false}, the window is created at the specified {@link #width(int)} and
-     * {@link #height(int)} and the user cannot resize it. This is equivalent to calling
-     * {@link Webview#setFixedSize(int, int)} immediately after build.
+     * {@link #height(int)} and the user cannot resize it. This is equivalent to calling {@link
+     * Webview#setFixedSize(int, int)} immediately after build.
      *
      * @param resizable {@code false} to prevent user resizing
      * @return this builder
