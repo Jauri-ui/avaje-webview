@@ -40,7 +40,9 @@ final class LinuxHelper {
   static void setWindowAppearance(Webview webview, boolean shouldBeDark) {
     try (var arena = Arena.ofConfined()) {
       final var settings = Gtk4.gtkSettingsGetDefault();
-      if (settings.address() == 0L) throw new RuntimeException("Failed to get GTK settings");
+      if (settings.address() == 0L) {
+        throw new RuntimeException("Failed to get GTK settings");
+      }
       final var propertyName =
           arena.allocateFrom("gtk-application-prefer-dark-theme", StandardCharsets.UTF_8);
       GLib.gObjectSet(settings, propertyName, shouldBeDark ? 1 : 0, MemorySegment.NULL);

@@ -780,7 +780,9 @@ final class Win32 {
                   0,
                   KEY_READ | KEY_WOW64_32KEY,
                   pKey);
-      if (status != ERROR_SUCCESS) return null;
+      if (status != ERROR_SUCCESS) {
+        return null;
+      }
       final var hkey = pKey.get(JAVA_LONG, 0);
       try {
         final var cbData = a.allocate(JAVA_INT);
@@ -796,7 +798,9 @@ final class Win32 {
                     MemorySegment.NULL,
                     cbData);
         final var bufSize = cbData.get(JAVA_INT, 0);
-        if (bufSize <= 0) return null;
+        if (bufSize <= 0) {
+          return null;
+        }
         final var buf = a.allocate(bufSize);
         cbData.set(JAVA_INT, 0, bufSize);
         status =
@@ -808,7 +812,9 @@ final class Win32 {
                     MemorySegment.NULL,
                     buf,
                     cbData);
-        if (status != ERROR_SUCCESS) return null;
+        if (status != ERROR_SUCCESS) {
+          return null;
+        }
         // UTF-16LE, strip trailing nulls
         return buf.reinterpret(bufSize)
             .getString(0, StandardCharsets.UTF_16LE)
@@ -834,7 +840,9 @@ final class Win32 {
                   0,
                   KEY_READ | KEY_WOW64_32KEY,
                   pKey);
-      if (status != ERROR_SUCCESS) return -1;
+      if (status != ERROR_SUCCESS) {
+        return -1;
+      }
       final var hkey = pKey.get(JAVA_LONG, 0);
       try {
         final var buf = a.allocate(JAVA_INT);
@@ -849,7 +857,9 @@ final class Win32 {
                     MemorySegment.NULL,
                     buf,
                     cbData);
-        if (status != ERROR_SUCCESS) return -1;
+        if (status != ERROR_SUCCESS) {
+          return -1;
+        }
         return buf.get(JAVA_INT, 0);
       } finally {
         final var _ = (int) RegCloseKey.invokeExact(hkey);
@@ -876,7 +886,9 @@ final class Win32 {
 
   /** Sets the calling thread's DPI awareness to Per-Monitor V2 so that {@link #GetDpiForWindow} */
   static void enablePerMonitorDpiAwareness() {
-    if (SetThreadDpiAwarenessContext == null) return;
+    if (SetThreadDpiAwarenessContext == null) {
+      return;
+    }
     try {
       // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = (HANDLE)-4
       final var _ =

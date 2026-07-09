@@ -546,7 +546,9 @@ final class Gtk4 {
   static void gtkWindowBeginMoveDrag(MemorySegment window) {
     try (var a = Arena.ofConfined()) {
       final var surface = (MemorySegment) GTK_NATIVE_GET_SURFACE.invokeExact(window);
-      if (surface.address() == 0L) return;
+      if (surface.address() == 0L) {
+        return;
+      }
       final var display = (MemorySegment) GTK_WIDGET_GET_DISPLAY.invokeExact(window);
       final var seat = (MemorySegment) GDK_DISPLAY_GET_DEFAULT_SEAT.invokeExact(display);
       final var pointer = (MemorySegment) GDK_SEAT_GET_POINTER.invokeExact(seat);

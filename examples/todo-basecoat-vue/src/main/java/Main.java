@@ -2,7 +2,9 @@ import io.avaje.webview.Webview;
 
 void main() {
   try (var stream = this.getClass().getResourceAsStream("index.html")) {
-    if (stream == null) throw new IllegalStateException();
+    if (stream == null) {
+      throw new IllegalStateException();
+    }
     
     var webview = Webview.builder()
         .title("avaje todo")

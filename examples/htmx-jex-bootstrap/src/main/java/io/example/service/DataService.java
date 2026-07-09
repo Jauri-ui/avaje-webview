@@ -51,7 +51,9 @@ public final class DataService {
   }
 
   public List<Task> searchTasks(String search, int limit) {
-    if (search == null) return List.of();
+    if (search == null) {
+      return List.of();
+    }
     String[] tokens = asTokens(search);
     return searchTasks(tokens, limit);
   }

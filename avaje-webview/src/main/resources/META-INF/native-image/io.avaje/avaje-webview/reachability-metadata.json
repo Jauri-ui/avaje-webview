@@ -90,6 +90,15 @@
           "void*",
           "void*"
         ]
+      },
+      {
+        "returnType": "jbyte",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "void*",
+          ["jdouble", "jdouble", "jdouble", "jdouble"]
+        ]
       }
     ],
     "downcalls": [

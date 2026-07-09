@@ -58,7 +58,9 @@ String HTML =
     // Native decorations are gone (see .borderless(true) below), so dragging the
     // colored bar has to start a native window-move ourselves via a bound function.
     document.getElementById('titlebar').addEventListener('mousedown', event => {
-      if (event.button !== 0 || event.target.closest('.titlebar-btn')) return;
+      if (event.button !== 0 || event.target.closest('.titlebar-btn')) {
+        return;
+      }
       startDrag();
     });
 

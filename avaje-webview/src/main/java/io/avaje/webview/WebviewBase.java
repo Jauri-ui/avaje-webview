@@ -39,7 +39,9 @@ public abstract sealed class WebviewBase implements Webview
           original[name](...parameters);
         }
         for (const [name, it] of Object.entries(console)) {
-          if (typeof it !== "function") continue;
+          if (typeof it !== "function") {
+            continue;
+          }
           console[name] = (...parameters) => log(name, ...parameters);
         }
         window.addEventListener("error", event => {
@@ -58,12 +60,20 @@ public abstract sealed class WebviewBase implements Webview
       (function() {
         'use strict';
         document.addEventListener('mousedown', function(e) {
-          if (e.button !== 0) return;
+          if (e.button !== 0) {
+            return;
+          }
           var el = e.target;
           while (el instanceof HTMLElement) {
             var r = window.getComputedStyle(el).getPropertyValue('-webkit-app-region');
-            if (r === 'no-drag') return;
-            if (r === 'drag') { e.preventDefault(); __avaje_wv_drag__(); return; }
+            if (r === 'no-drag') {
+              return;
+            }
+            if (r === 'drag') {
+              e.preventDefault();
+              __avaje_wv_drag__();
+              return;
+            }
             el = el.parentElement;
           }
         });
@@ -110,8 +120,12 @@ public abstract sealed class WebviewBase implements Webview
     final var emptyBind = buildBindScript();
     userScripts.add(emptyBind);
     nativeAddUserScript(emptyBind);
-    if (redirectConsole) redirectConsole();
-    if (borderless && this instanceof Win32WebView) setupAppRegionDrag();
+    if (redirectConsole) {
+      redirectConsole();
+    }
+    if (borderless && this instanceof Win32WebView) {
+      setupAppRegionDrag();
+    }
   }
 
   private void setupAppRegionDrag() {
@@ -210,9 +224,9 @@ public abstract sealed class WebviewBase implements Webview
           evalImpl(
               "if (window.__webview__ && !window.hasOwnProperty("
                   + jsonEscape(name)
-                  + ")) window.__webview__.onBind("
+                  + ")) { window.__webview__.onBind("
                   + jsonEscape(name)
-                  + ")");
+                  + "); }");
         });
   }
 
@@ -222,7 +236,10 @@ public abstract sealed class WebviewBase implements Webview
     dispatchImpl(
         () -> {
           rebuildBindScript();
-          evalImpl("if (window.__webview__) window.__webview__.onUnbind(" + jsonEscape(name) + ")");
+          evalImpl(
+              "if (window.__webview__) { window.__webview__.onUnbind("
+                  + jsonEscape(name)
+                  + "); }");
         });
   }
 
@@ -520,27 +537,41 @@ public abstract sealed class WebviewBase implements Webview
             Webview_.prototype.call = function(method) {
               var _id = generateId();
               var _params = Array.prototype.slice.call(arguments, 1);
-              var promise = new Promise(function(resolve, reject) { _promises[_id] = { resolve, reject }; });
+              var promise = new Promise(function(resolve, reject) {
+                _promises[_id] = { resolve, reject };
+              });
               this.post(JSON.stringify({ id: _id, method: method, params: _params }));
               return promise;
             };
             Webview_.prototype.onReply = function(id, status, result) {
               var promise = _promises[id];
               if (result !== undefined) {
-                try { result = JSON.parse(result); }
-                catch (e) { promise.reject(new Error('Failed to parse binding result as JSON')); return; }
+                try {
+                  result = JSON.parse(result);
+                } catch (e) {
+                  promise.reject(new Error('Failed to parse binding result as JSON'));
+                  return;
+                }
               }
-              if (status === 0) { promise.resolve(result); } else { promise.reject(result); }
+              if (status === 0) {
+                promise.resolve(result);
+              } else {
+                promise.reject(result);
+              }
             };
             Webview_.prototype.onBind = function(name) {
-              if (window.hasOwnProperty(name)) throw new Error('Property "' + name + '" already exists');
+              if (window.hasOwnProperty(name)) {
+                throw new Error('Property "' + name + '" already exists');
+              }
               window[name] = (function() {
                 var params = [name].concat(Array.prototype.slice.call(arguments));
                 return Webview_.prototype.call.apply(this, params);
               }).bind(this);
             };
             Webview_.prototype.onUnbind = function(name) {
-              if (!window.hasOwnProperty(name)) throw new Error('Property "' + name + '" does not exist');
+              if (!window.hasOwnProperty(name)) {
+                throw new Error('Property "' + name + '" does not exist');
+              }
               delete window[name];
             };
             return Webview_;
@@ -555,7 +586,9 @@ public abstract sealed class WebviewBase implements Webview
     final var sb = new StringBuilder("(function() {'use strict';  var methods = [");
     var first = true;
     for (final String name : bindings.keySet()) {
-      if (!first) sb.append(", ");
+      if (!first) {
+        sb.append(", ");
+      }
       sb.append(jsonEscape(name));
       first = false;
     }
@@ -570,12 +603,20 @@ public abstract sealed class WebviewBase implements Webview
   static String jsonGet(String json, String key) {
     final var needle = "\"" + key + "\"";
     final var ki = json.indexOf(needle);
-    if (ki < 0) return "";
+    if (ki < 0) {
+      return "";
+    }
     final var colon = json.indexOf(':', ki + needle.length());
-    if (colon < 0) return "";
+    if (colon < 0) {
+      return "";
+    }
     var vi = colon + 1;
-    while (vi < json.length() && json.charAt(vi) == ' ') vi++;
-    if (vi >= json.length()) return "";
+    while (vi < json.length() && json.charAt(vi) == ' ') {
+      vi++;
+    }
+    if (vi >= json.length()) {
+      return "";
+    }
     final var first = json.charAt(vi);
     if (first == '"') {
       var end = vi + 1;
@@ -585,7 +626,9 @@ public abstract sealed class WebviewBase implements Webview
           end += 2;
           continue;
         }
-        if (c == '"') break;
+        if (c == '"') {
+          break;
+        }
         end++;
       }
       return json.substring(vi + 1, end);

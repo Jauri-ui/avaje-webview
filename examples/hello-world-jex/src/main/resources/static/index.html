@@ -136,7 +136,9 @@
         let timerInterval = null;
         
         async function startTimer() {
-            if (typeof window.__timerStart__ !== 'function') return;
+            if (typeof window.__timerStart__ !== 'function') {
+                return;
+            }
             
             // Notify backend to start
             await window.__timerStart__();

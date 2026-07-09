@@ -149,7 +149,9 @@ final class WebviewBuilder implements Builder {
   @Override
   public Webview build() {
     final WebviewBase view = createForPlatform();
-    if (title != null) view.setTitle(title);
+    if (title != null) {
+      view.setTitle(title);
+    }
     if (url != null) {
       view.navigate(url);
     } else if (html != null) {
@@ -165,24 +167,33 @@ final class WebviewBuilder implements Builder {
     if (!resizable) {
       view.setFixedSize(width, height);
     } else {
-      if (!maximizable) view.disableMaximize();
-      if (minWidth > 0) view.setMinSize(minWidth, minHeight);
-      if (maxWidth > 0) view.setMaxSize(maxWidth, maxHeight);
+      if (!maximizable) {
+        view.disableMaximize();
+      }
+      if (minWidth > 0) {
+        view.setMinSize(minWidth, minHeight);
+      }
+      if (maxWidth > 0) {
+        view.setMaxSize(maxWidth, maxHeight);
+      }
     }
     return view;
   }
 
   private WebviewBase createForPlatform() {
     final var os = System.getProperty("os.name", "").toLowerCase();
-    if (os.contains("win"))
+    if (os.contains("win")) {
       return new Win32WebView(
           enableDeveloperTools, redirectConsole, width, height, borderless, outline, transparent, parent, moveParentWithChild);
-    if (os.contains("mac"))
+    }
+    if (os.contains("mac")) {
       return new CocoaWebView(
           enableDeveloperTools, redirectConsole, width, height, borderless, outline, transparent, parent, moveParentWithChild);
-    if (os.contains("linux"))
+    }
+    if (os.contains("linux")) {
       return new GtkWebView(
           enableDeveloperTools, redirectConsole, width, height, borderless, outline, transparent, parent, moveParentWithChild);
+    }
     throw new UnsupportedOperationException(
         "Unsupported platform: " + System.getProperty("os.name"));
   }

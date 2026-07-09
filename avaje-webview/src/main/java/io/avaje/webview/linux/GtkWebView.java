@@ -145,7 +145,9 @@ public final class GtkWebView extends WebviewBase {
 
   @Override
   public void close() {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     closed = true;
     // All GTK/GObject calls must happen on the GTK thread. Dispatch there regardless of caller.
     if (Thread.currentThread() == gtkThread) {
@@ -189,7 +191,9 @@ public final class GtkWebView extends WebviewBase {
 
   @Override
   protected void navigateImpl(String url) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       WebKit6.webkitWebViewLoadUri(webView, a.allocateFrom(url));
     }
@@ -197,7 +201,9 @@ public final class GtkWebView extends WebviewBase {
 
   @Override
   protected void setTitleImpl(String title) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       Gtk4.gtkWindowSetTitle(window, a.allocateFrom(title));
     }
@@ -205,7 +211,9 @@ public final class GtkWebView extends WebviewBase {
 
   @Override
   protected void setSizeImpl(int width, int height) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     // Must be resizable before changing default size, or the window ignores the request.
     Gtk4.gtkWindowSetResizable(window, true);
     Gtk4.gtkWindowSetDefaultSize(window, width, height);
@@ -213,7 +221,9 @@ public final class GtkWebView extends WebviewBase {
 
   @Override
   protected void setMinSizeImpl(int width, int height) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     Gtk4.gtkWidgetSetSizeRequest(webView, width, height);
   }
 
@@ -230,14 +240,18 @@ public final class GtkWebView extends WebviewBase {
 
   @Override
   protected void setFixedSizeImpl(int width, int height) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     Gtk4.gtkWindowSetResizable(window, false);
     Gtk4.gtkWindowSetDefaultSize(window, width, height);
   }
 
   @Override
   protected void setHtmlImpl(String html) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       WebKit6.webkitWebViewLoadHtml(webView, a.allocateFrom(html), MemorySegment.NULL);
     }
@@ -245,13 +259,17 @@ public final class GtkWebView extends WebviewBase {
 
   @Override
   protected void evalImpl(String js) {
-    if (closed || webView == null || webView.address() == 0L) return;
+    if (closed || webView == null || webView.address() == 0L) {
+      return;
+    }
     // webkit_web_view_evaluate_javascript asserts WEBKIT_IS_WEB_VIEW(web_view) and additionally
     // requires a page to be loaded. Calling it before any content is loaded triggers a
     // g_return_val_if_fail abort in the WebKit process. get_uri() returns NULL/address==0 when
     // no page is loaded, so we use it as a cheap guard before every eval.
     final var uri = WebKit6.webkitWebViewGetUri(webView);
-    if (uri.address() == 0L) return;
+    if (uri.address() == 0L) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       WebKit6.webkitWebViewEvaluateJavascript(webView, a.allocateFrom(js), -1L);
     }
@@ -272,7 +290,9 @@ public final class GtkWebView extends WebviewBase {
 
   @Override
   protected void nativeAddUserScript(String js) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       final var script =
           WebKit6.webkitUserScriptNew(
@@ -289,7 +309,9 @@ public final class GtkWebView extends WebviewBase {
 
   @Override
   protected void nativeRemoveAllUserScripts() {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     WebKit6.webkitUcmRemoveAllScripts(ucManager);
   }
 
@@ -393,7 +415,9 @@ public final class GtkWebView extends WebviewBase {
     // no NVIDIA driver
     if (System.getenv("WAYLAND_DISPLAY") != null
         || !new java.io.File("/sys/module/nvidia").isDirectory()
-        || System.getenv("WEBKIT_DISABLE_DMABUF_RENDERER") != null) return; // already set
+        || System.getenv("WEBKIT_DISABLE_DMABUF_RENDERER") != null) {
+      return; // already set
+    }
     try {
       final var libc = SymbolLookup.libraryLookup("libc.so.6", Arena.global());
       final var setenv =
@@ -416,8 +440,12 @@ public final class GtkWebView extends WebviewBase {
   }
 
   private static void initGtk() {
-    if (gtkInitDone) return;
-    if (!Gtk4.gtkInitCheck()) throw new RuntimeException("gtk_init_check() failed, no display?");
+    if (gtkInitDone) {
+      return;
+    }
+    if (!Gtk4.gtkInitCheck()) {
+      throw new RuntimeException("gtk_init_check() failed, no display?");
+    }
     gtkInitDone = true;
   }
 
@@ -474,8 +502,12 @@ public final class GtkWebView extends WebviewBase {
 
   private void initWindowAndWebView(boolean debug) {
     window = Gtk4.gtkWindowNew();
-    if (borderless) Gtk4.gtkWindowSetDecorated(window, false);
-    if (transparent) Gtk4.gtkMakeWindowTransparent(window);
+    if (borderless) {
+      Gtk4.gtkWindowSetDecorated(window, false);
+    }
+    if (transparent) {
+      Gtk4.gtkMakeWindowTransparent(window);
+    }
     GLib.gSignalConnect(window, "destroy", destroyStub, MemorySegment.NULL);
     if (parentWindow.address() != 0L) {
       Gtk4.gtkWindowSetTransientFor(window, parentWindow);
@@ -488,7 +520,9 @@ public final class GtkWebView extends WebviewBase {
     // set). g_object_ref_sink atomically claims ownership by clearing the floating flag, giving us
     // a stable +1 reference that we control.
     GLib.gObjectRefSink(webView);
-    if (transparent) WebKit6.webkitWebViewSetBackgroundColor(webView, 0f, 0f, 0f, 0f);
+    if (transparent) {
+      WebKit6.webkitWebViewSetBackgroundColor(webView, 0f, 0f, 0f, 0f);
+    }
 
     ucManager = WebKit6.webkitWebViewGetUserContentManager(webView);
     try (var a = Arena.ofConfined()) {
@@ -515,7 +549,9 @@ public final class GtkWebView extends WebviewBase {
   }
 
   private void showWindow(int width, int height) {
-    if (windowShown) return;
+    if (windowShown) {
+      return;
+    }
     Gtk4.gtkWindowSetDefaultSize(window, width, height);
     Gtk4.gtkWindowSetChild(window, webView);
     Gtk4.gtkWidgetSetVisible(webView, true);

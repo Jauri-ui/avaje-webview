@@ -263,7 +263,9 @@ public final class CocoaWebView extends WebviewBase {
 
   @Override
   public void close() {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     closed = true;
     dispatchImpl(
         () -> {
@@ -281,7 +283,9 @@ public final class CocoaWebView extends WebviewBase {
 
   @Override
   protected void navigateImpl(String url) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       // NSURL → NSURLRequest → [WKWebView loadRequest:]
       final var nsUrl =
@@ -293,7 +297,9 @@ public final class CocoaWebView extends WebviewBase {
 
   @Override
   protected void setTitleImpl(String title) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       MSG_SEND_SET_TITLE.invokeExact(nsWindow, sel(a, "setTitle:"), nsString(a, title));
     } catch (final Throwable t) {
@@ -303,7 +309,9 @@ public final class CocoaWebView extends WebviewBase {
 
   @Override
   protected void setSizeImpl(int width, int height) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       MSG_SEND_SET_CONTENT_SIZE.invokeExact(
           nsWindow, sel(a, "setContentSize:"), (double) width, (double) height);
@@ -314,7 +322,9 @@ public final class CocoaWebView extends WebviewBase {
 
   @Override
   protected void setMinSizeImpl(int width, int height) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       MSG_SEND_SET_SIZE.invokeExact(
           nsWindow, sel(a, "setMinSize:"), (double) width, (double) height);
@@ -325,7 +335,9 @@ public final class CocoaWebView extends WebviewBase {
 
   @Override
   protected void setMaxSizeImpl(int width, int height) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       MSG_SEND_SET_SIZE.invokeExact(
           nsWindow, sel(a, "setMaxSize:"), (double) width, (double) height);
@@ -337,7 +349,9 @@ public final class CocoaWebView extends WebviewBase {
   @Override
   protected void disableMaximizeImpl() {
     disableZoom = true;
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       final var buttonMh =
           Linker.nativeLinker()
@@ -356,7 +370,9 @@ public final class CocoaWebView extends WebviewBase {
                       ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
       final var zoomBtn =
           (MemorySegment) buttonMh.invokeExact(nsWindow, sel(a, "standardWindowButton:"), 2L);
-      if (zoomBtn.address() != 0) hideMh.invokeExact(zoomBtn, sel(a, "setHidden:"), 1);
+      if (zoomBtn.address() != 0) {
+        hideMh.invokeExact(zoomBtn, sel(a, "setHidden:"), 1);
+      }
 
       final long behavior =
           ((MemorySegment) MSG_SEND_0.invokeExact(nsWindow, sel(a, "collectionBehavior"))).address();
@@ -372,7 +388,9 @@ public final class CocoaWebView extends WebviewBase {
 
   @Override
   protected void setFixedSizeImpl(int width, int height) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       MSG_SEND_SET_CONTENT_SIZE.invokeExact(
           nsWindow, sel(a, "setContentSize:"), (double) width, (double) height);
@@ -398,7 +416,9 @@ public final class CocoaWebView extends WebviewBase {
 
   @Override
   protected void setHtmlImpl(String html) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       send2(wkWebView, sel(a, "loadHTMLString:baseURL:"), nsString(a, html), MemorySegment.NULL);
     }
@@ -406,7 +426,9 @@ public final class CocoaWebView extends WebviewBase {
 
   @Override
   protected void evalImpl(String js) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       // NULL completionHandler = fire-and-forget. WKWebView evaluates the script asynchronously;
       // results flow back through the postMessage JS bridge, not through this completion handler.
@@ -457,7 +479,9 @@ public final class CocoaWebView extends WebviewBase {
 
   @Override
   protected void nativeAddUserScript(String js) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       final var WKUserScript = ObjC.getClass(a, "WKUserScript");
       final var script =
@@ -476,7 +500,9 @@ public final class CocoaWebView extends WebviewBase {
 
   @Override
   protected void nativeRemoveAllUserScripts() {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       sendVoid0(ucController, sel(a, "removeAllUserScripts"));
     }
@@ -563,7 +589,9 @@ public final class CocoaWebView extends WebviewBase {
    */
   @SuppressWarnings("unused")
   public void onWindowWillClose(MemorySegment self, MemorySegment cmd, MemorySegment notification) {
-    if (!windowClosed.compareAndSet(false, true)) return;
+    if (!windowClosed.compareAndSet(false, true)) {
+      return;
+    }
     closed = true;
     if (parentWindow.address() != 0) {
       MacOSHelper.removeChildWindow(parentWindow, nsWindow);
@@ -588,7 +616,9 @@ public final class CocoaWebView extends WebviewBase {
    */
   @SuppressWarnings("unused")
   public void onWindowDidMove(MemorySegment self, MemorySegment cmd, MemorySegment notification) {
-    if (syncMoving || parentWindow.address() == 0) return;
+    if (syncMoving || parentWindow.address() == 0) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       final var frameSel = sel(a, "frame");
       final var cf =
@@ -599,7 +629,9 @@ public final class CocoaWebView extends WebviewBase {
       childLastX = cx;
       childLastY = cy;
 
-      if (cdx == 0 && cdy == 0) return;
+      if (cdx == 0 && cdy == 0) {
+        return;
+      }
 
       final var pf =
           (MemorySegment)
@@ -675,7 +707,9 @@ public final class CocoaWebView extends WebviewBase {
    * agent.
    */
   private static void initNSApp() {
-    if (nsAppInitDone) return;
+    if (nsAppInitDone) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       final var NSApp = ObjC.getClass(a, "NSApplication");
       final var app = send0(NSApp, sel(a, "sharedApplication"));
@@ -838,7 +872,9 @@ public final class CocoaWebView extends WebviewBase {
         final var setHidden = sel(a, "setHidden:");
         for (long btn = 0L; btn <= 2L; btn++) {
           final var button = (MemorySegment) buttonMh.invokeExact(nsWindow, stdBtn, btn);
-          if (button.address() != 0) hideMh.invokeExact(button, setHidden, 1);
+          if (button.address() != 0) {
+            hideMh.invokeExact(button, setHidden, 1);
+          }
         }
       }
 

@@ -20,8 +20,12 @@ class WebviewIntegrationTest {
 
   private static void rethrow(AtomicReference<Throwable> failure) {
     final var t = failure.get();
-    if (t instanceof final AssertionError ae) throw ae;
-    if (t != null) throw new RuntimeException(t);
+    if (t instanceof final AssertionError ae) {
+      throw ae;
+    }
+    if (t != null) {
+      throw new RuntimeException(t);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -679,7 +683,9 @@ class WebviewIntegrationTest {
 
       // Join the w2 thread so assertions see its writes.
       final var t = w2Thread.get();
-      if (t != null) t.join(5_000);
+      if (t != null) {
+        t.join(5_000);
+      }
     }
 
     rethrow(failure);

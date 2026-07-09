@@ -429,7 +429,9 @@ final class ObjC {
    * @return an autoreleased {@code NSString*}
    */
   static MemorySegment nsString(Arena a, String s) {
-    if (s == null) return MemorySegment.NULL;
+    if (s == null) {
+      return MemorySegment.NULL;
+    }
     try {
       final var cls = getClass(a, "NSString");
       final var sel = sel(a, "stringWithUTF8String:");
@@ -447,7 +449,9 @@ final class ObjC {
    * @return the string content as a Java {@code String}
    */
   static String fromNSString(Arena a, MemorySegment ns) {
-    if (ns.equals(MemorySegment.NULL)) return "";
+    if (ns.equals(MemorySegment.NULL)) {
+      return "";
+    }
     try {
       final var utf8Addr = send0(ns, sel(a, "UTF8String"));
       return utf8Addr.reinterpret(Long.MAX_VALUE).getString(0);

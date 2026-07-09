@@ -24,7 +24,9 @@ final class MacOSHelper {
   private MacOSHelper() {}
 
   static boolean startedOnFirstThread() {
-    if (System.getProperty("org.graalvm.nativeimage.imagecode") != null) return true;
+    if (System.getProperty("org.graalvm.nativeimage.imagecode") != null) {
+      return true;
+    }
     try {
       final var linker = Linker.nativeLinker();
       final var pid =

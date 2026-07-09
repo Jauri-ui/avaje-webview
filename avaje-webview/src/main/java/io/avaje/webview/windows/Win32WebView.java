@@ -81,9 +81,10 @@ public final class Win32WebView extends WebviewBase {
       }
     }
 
-    if (fn == null)
+    if (fn == null) {
       throw new UnsatisfiedLinkError(
           "WebView2 not available - install Microsoft Edge or the WebView2 Runtime");
+    }
     CREATE_ENV_FN = fn;
     USE_LOADER_DLL = loaderDll;
   }
@@ -96,9 +97,13 @@ public final class Win32WebView extends WebviewBase {
             : "x86".equals(osArch) || "i386".equals(osArch) ? "x86" : "arm64";
     for (final long root : new long[] {Win32.HKEY_LOCAL_MACHINE, Win32.HKEY_CURRENT_USER}) {
       final var ebWebView = Win32.regQueryString(root, EDGE_UPDATE_KEY, "EBWebView");
-      if (ebWebView == null) continue;
+      if (ebWebView == null) {
+        continue;
+      }
       var p = ebWebView;
-      if (!p.endsWith("\\") && !p.endsWith("/")) p += "\\";
+      if (!p.endsWith("\\") && !p.endsWith("/")) {
+        p += "\\";
+      }
       return p + "EBWebView\\" + arch + "\\EmbeddedBrowserWebView.dll";
     }
     return null;
@@ -179,7 +184,9 @@ public final class Win32WebView extends WebviewBase {
     Win32.enablePerMonitorDpiAwareness();
     buildWndProcStubs();
     createWindows();
-    if (this.parentWindow.address() != 0) Win32.enableWindow(this.parentWindow, false);
+    if (this.parentWindow.address() != 0) {
+      Win32.enableWindow(this.parentWindow, false);
+    }
     embedWebView2(debug);
     setSizeImpl(width, height);
     Win32.centerWindow(hwnd, this.parentWindow);
@@ -205,7 +212,9 @@ public final class Win32WebView extends WebviewBase {
 
   @Override
   public void close() {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     closed = true;
     dispatchImpl(this::doClose);
   }
@@ -217,7 +226,9 @@ public final class Win32WebView extends WebviewBase {
       } catch (final Throwable ignored) {
       }
     }
-    if (controller != null) controller.close();
+    if (controller != null) {
+      controller.close();
+    }
     if (hwnd != null && hwnd.address() != 0) {
       try {
         final var _ = (int) Win32.DestroyWindow.invokeExact(hwnd);
@@ -339,7 +350,9 @@ public final class Win32WebView extends WebviewBase {
 
   @Override
   protected void evalImpl(String js) {
-    if (closed) return;
+    if (closed) {
+      return;
+    }
     webView2.executeScript(js);
   }
 
@@ -494,7 +507,9 @@ public final class Win32WebView extends WebviewBase {
         return 0;
       }
       case Win32.WM_ACTIVATE -> {
-        if ((int) (wParam & 0xFFFF) != Win32.WA_INACTIVE) focusWebView2();
+        if ((int) (wParam & 0xFFFF) != Win32.WA_INACTIVE) {
+          focusWebView2();
+        }
         return 0;
       }
       case Win32.WM_GETMINMAXINFO -> {
@@ -666,8 +681,9 @@ public final class Win32WebView extends WebviewBase {
                   MemorySegment.NULL,
                   hInstance,
                   MemorySegment.NULL);
-      if (hwnd == null || hwnd.address() == 0)
+      if (hwnd == null || hwnd.address() == 0) {
         throw new RuntimeException("CreateWindowExW (main) failed");
+      }
 
       final var widgetCls = "AvajeWebView_Widget_" + System.identityHashCode(this);
       registerClass(a, hInstance, widgetCls, widgetWndProcStub);
@@ -688,8 +704,9 @@ public final class Win32WebView extends WebviewBase {
                   MemorySegment.NULL,
                   hInstance,
                   MemorySegment.NULL);
-      if (hwndWidget == null || hwndWidget.address() == 0)
+      if (hwndWidget == null || hwndWidget.address() == 0) {
         throw new RuntimeException("CreateWindowExW (widget) failed");
+      }
 
       final var msgCls = "AvajeWebView_Msg_" + System.identityHashCode(this);
       registerClass(a, hInstance, msgCls, msgWndProcStub);
@@ -708,8 +725,9 @@ public final class Win32WebView extends WebviewBase {
                   MemorySegment.NULL,
                   hInstance,
                   MemorySegment.NULL);
-      if (hwndMsg == null || hwndMsg.address() == 0)
+      if (hwndMsg == null || hwndMsg.address() == 0) {
         throw new RuntimeException("CreateWindowExW (message) failed");
+      }
 
     } catch (final Throwable t) {
       throw new RuntimeException(t);
@@ -748,7 +766,9 @@ public final class Win32WebView extends WebviewBase {
     combinedHandler = buildCombinedHandler();
     try {
       var userData = System.getenv("APPDATA");
-      if (userData == null) userData = System.getProperty("user.home");
+      if (userData == null) {
+        userData = System.getProperty("user.home");
+      }
       userData += "\\avaje-webview";
       int hr;
       if (USE_LOADER_DLL) {
@@ -773,9 +793,10 @@ public final class Win32WebView extends WebviewBase {
                       combinedHandler);
         }
       }
-      if (hr != 0)
+      if (hr != 0) {
         throw new RuntimeException(
             "CreateCoreWebView2Environment failed: 0x" + Integer.toHexString(hr));
+      }
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
@@ -785,7 +806,9 @@ public final class Win32WebView extends WebviewBase {
     // is called (via setupJsBridge -> nativeAddUserScript from within msgWndProc), so nested
     // pumping for completion delivery works correctly.
     pumpLoop(() -> webviewReady);
-    if (webView2 == null) throw new RuntimeException("WebView2 initialization failed");
+    if (webView2 == null) {
+      throw new RuntimeException("WebView2 initialization failed");
+    }
   }
 
   private MemorySegment buildCombinedHandler() {
@@ -889,7 +912,9 @@ public final class Win32WebView extends WebviewBase {
   private void doInitTasks() {
     applySettings(debugMode);
     Win32.applyDarkMode(hwnd, isDarkTheme());
-    if (transparent) applyTransparency();
+    if (transparent) {
+      applyTransparency();
+    }
     setupJsBridge(POST_FN); // nativeAddUserScript uses nested pump; works from msgWndProc context
     resizeWidget(hwnd);
     try {
@@ -1082,13 +1107,17 @@ public final class Win32WebView extends WebviewBase {
     }
     // Unblock the nativeAddUserScript that submitted this script (FIFO order).
     final var cb = scriptDoneCallbacks.poll();
-    if (cb != null) cb.run();
+    if (cb != null) {
+      cb.run();
+    }
     return 0;
   }
 
   private void applySettings(boolean debug) {
     final var settings = webView2.getSettings();
-    if (settings == null) return;
+    if (settings == null) {
+      return;
+    }
     settings.putIsStatusBarEnabled(false);
     settings.putAreDevToolsEnabled(debug);
   }
@@ -1098,7 +1127,9 @@ public final class Win32WebView extends WebviewBase {
   }
 
   private void resizeWidget(MemorySegment hWnd) {
-    if (hwndWidget == null || hwndWidget.address() == 0) return;
+    if (hwndWidget == null || hwndWidget.address() == 0) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       final var rect = Win32.getClientRect(hWnd, a);
       final var left = rect.get(JAVA_INT, 0);
@@ -1112,20 +1143,26 @@ public final class Win32WebView extends WebviewBase {
   }
 
   private void resizeWebView2(MemorySegment hWnd) {
-    if (controller == null) return;
+    if (controller == null) {
+      return;
+    }
     try (var a = Arena.ofConfined()) {
       final var rect = Win32.getClientRect(hWnd, a);
       final int l = rect.get(JAVA_INT, 0),
           t = rect.get(JAVA_INT, 4),
           r = rect.get(JAVA_INT, 8),
           b = rect.get(JAVA_INT, 12);
-      if (r - l <= 0 || b - t <= 0) return;
+      if (r - l <= 0 || b - t <= 0) {
+        return;
+      }
       controller.putBounds(rect);
     }
   }
 
   private void focusWebView2() {
-    if (controller != null) controller.moveFocus(Win32.COREWEBVIEW2_MOVE_FOCUS_PROGRAMMATIC);
+    if (controller != null) {
+      controller.moveFocus(Win32.COREWEBVIEW2_MOVE_FOCUS_PROGRAMMATIC);
+    }
   }
 
   private void applyMinMaxInfo(long lParam) {
@@ -1156,12 +1193,18 @@ public final class Win32WebView extends WebviewBase {
     try (var a = Arena.ofConfined()) {
       final var msg = a.allocate(Win32.MSG_LAYOUT);
       for (; ; ) {
-        if (done.getAsBoolean()) break;
+        if (done.getAsBoolean()) {
+          break;
+        }
         final var r = (int) Win32.GetMessageW.invokeExact(msg, MemorySegment.NULL, 0, 0);
-        if (r <= 0 || msg.get(JAVA_INT, 8) == Win32.WM_QUIT) break;
+        if (r <= 0 || msg.get(JAVA_INT, 8) == Win32.WM_QUIT) {
+          break;
+        }
         final var _ = (int) Win32.TranslateMessage.invokeExact(msg);
         final var _ = (long) Win32.DispatchMessageW.invokeExact(msg);
-        if (done.getAsBoolean()) break;
+        if (done.getAsBoolean()) {
+          break;
+        }
       }
     } catch (final Throwable t) {
       throw new RuntimeException(t);
@@ -1258,7 +1301,9 @@ public final class Win32WebView extends WebviewBase {
    */
   @SuppressWarnings("unused")
   private static int comQI(MemorySegment self, MemorySegment iid, MemorySegment ppv) {
-    if (ppv.address() != 0) ppv.reinterpret(ADDRESS.byteSize()).set(ADDRESS, 0, self);
+    if (ppv.address() != 0) {
+      ppv.reinterpret(ADDRESS.byteSize()).set(ADDRESS, 0, self);
+    }
     return 0; // S_OK
   }
 
