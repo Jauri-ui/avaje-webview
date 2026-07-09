@@ -348,6 +348,18 @@ public interface Webview extends Closeable, Runnable {
     Builder fullscreen(boolean fullscreen);
 
     /**
+     * Controls whether the user can resize the window. Defaults to {@code true}.
+     *
+     * <p>When set to {@code false}, the window is created at the specified {@link #width(int)} and
+     * {@link #height(int)} and the user cannot resize it. This is equivalent to calling
+     * {@link Webview#setFixedSize(int, int)} immediately after build.
+     *
+     * @param resizable {@code false} to prevent user resizing
+     * @return this builder
+     */
+    Builder resizable(boolean resizable);
+
+    /**
      * Builds a Webview using the configuration
      *
      * @return a configured Webview instance

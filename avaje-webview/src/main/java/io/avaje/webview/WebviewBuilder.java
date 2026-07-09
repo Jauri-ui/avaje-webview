@@ -20,6 +20,7 @@ final class WebviewBuilder implements Builder {
   private MemorySegment parent = MemorySegment.NULL;
   private boolean maximize;
   private boolean fullscreen;
+  private boolean resizable = true;
 
   WebviewBuilder() {}
 
@@ -95,6 +96,12 @@ final class WebviewBuilder implements Builder {
   }
 
   @Override
+  public WebviewBuilder resizable(boolean resizable) {
+    this.resizable = resizable;
+    return this;
+  }
+
+  @Override
   public Webview build() {
     final var view = createForPlatform();
     if (title != null) view.setTitle(title);
@@ -109,6 +116,9 @@ final class WebviewBuilder implements Builder {
       view.fullscreen();
     } else if (maximize) {
       view.maximizeWindow();
+    }
+    if (!resizable) {
+      view.setFixedSize(width, height);
     }
     return view;
   }

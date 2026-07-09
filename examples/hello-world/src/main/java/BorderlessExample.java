@@ -81,6 +81,7 @@ void main() {
           .width(500)
           .height(300)
           .borderless(true)
+          .resizable(false)
           .html(HTML)
           .build();
 
