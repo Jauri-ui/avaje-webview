@@ -13,8 +13,8 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.invoke.MethodHandle;
 
 /**
- * Panama FFM bindings for WebKitGTK 6.0 ({@code libwebkitgtk-6.0}) and its embedded JavaScriptCore
- * ({@code libjavascriptcoregtk-6.0}).
+ * FFM bindings for WebKitGTK 6.0 ({@code libwebkitgtk-6.0}) and its embedded JavaScriptCore ({@code
+ * libjavascriptcoregtk-6.0}).
  *
  * <p><b>All calls must happen on the GTK thread.</b> WebKitGTK is not thread-safe; it runs its own
  * web-process via IPC, but the GTK widget API itself must only be touched from the thread that
@@ -28,23 +28,12 @@ final class WebKit6 {
    * <p>Corresponds to {@code WEBKIT_USER_CONTENT_INJECT_TOP_FRAME} (value {@code 1}) in the
    * WebKitGTK C headers. When passed to {@link #WEBKIT_USER_SCRIPT_NEW}, the script runs only in
    * the top-level browsing context, not in {@code <iframe>} sub-frames.
-   *
-   * <p>We restrict to the top frame because our JS bridge ({@code window.__webview__}) uses {@code
-   * window.webkit.messageHandlers.__webview__.postMessage()}, which is only wired on the top-level
-   * frame's {@code window}. Running the bridge initialisation in an iframe would give it a
-   * different {@code window} object and a different {@code postMessage} target, breaking the
-   * binding protocol.
    */
   static final int WEBKIT_USER_CONTENT_INJECT_TOP_FRAME = 1;
 
   /**
-   * Injection time: at document start, before any page scripts.
-   *
-   * <p>Corresponds to {@code WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START} (value {@code 0}).
-   * Scripts injected at this point run before the page's own {@code <script>} tags, ensuring that
-   * {@code window.__webview__} exists by the time application code tries to call it. Using {@code
-   * AT_DOCUMENT_END} (value {@code 1}) would create a race where early-running page scripts could
-   * call bridge functions before they exist.
+   * Injection time: at document start, before the page's own {@code <script>} tags, ensuring that
+   * {@code window.__webview__} exists by the time application code tries to call it.
    */
   static final int WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START = 0;
 
@@ -75,11 +64,7 @@ final class WebKit6 {
 
   private static final Linker LINKER = Linker.nativeLinker();
 
-  /**
-   * Lookup for {@code libwebkitgtk-6.0.so.4} (soname {@code .4}, package {@code libwebkitgtk-6.0-4}
-   * on Debian/Ubuntu). The GTK4 port of WebKitGTK changed the soname from the GTK3 era's {@code
-   * libwebkit2gtk-4.0.so.37}.
-   */
+  /** Lookup for {@code libwebkitgtk-6.0.so.4} */
   private static final SymbolLookup WEBKIT_LIB =
       SymbolLookup.libraryLookup("libwebkitgtk-6.0.so.4", Arena.global());
 
@@ -200,8 +185,7 @@ final class WebKit6 {
    * -> void}
    *
    * <p>Controls whether JS running in the web view can read and write the system clipboard via
-   * {@code document.execCommand("copy")} and the Clipboard API. Enabled unconditionally so app code
-   * can use clipboard features without extra permission prompts.
+   * {@code document.execCommand("copy")} and the Clipboard API.
    */
   private static final MethodHandle WEBKIT_SETTINGS_SET_JS_CLIPBOARD =
       downcall(
@@ -213,8 +197,7 @@ final class WebKit6 {
    * enabled) -> void}
    *
    * <p>When enabled, WebKit writes {@code console.log()} etc. from the web process to the parent
-   * process's stdout. We enable this only in debug mode so console output is visible during
-   * development without the overhead in production.
+   * process's stdout.
    */
   private static final MethodHandle WEBKIT_SETTINGS_SET_CONSOLE_TO_STDOUT =
       downcall(
@@ -226,7 +209,7 @@ final class WebKit6 {
    * void}
    *
    * <p>Enables the WebKit Inspector (right-click -> Inspect Element). Must be true before a page is
-   * loaded for the context menu item to appear. We only enable in debug mode.
+   * loaded for the context menu item to appear.
    */
   private static final MethodHandle WEBKIT_SETTINGS_SET_DEV_EXTRAS =
       downcall(
@@ -625,21 +608,6 @@ final class WebKit6 {
   /**
    * Converts a JavaScriptCore value to a Java {@code String} and frees the native buffer.
    *
-   * <p>{@code jsc_value_to_string} returns a fresh {@code gchar*} allocated by GLib's allocator.
-   * Two steps are required to read it safely in Panama:
-   *
-   * <ol>
-   *   <li>{@code raw.reinterpret(Long.MAX_VALUE)} - Panama creates {@link MemorySegment} objects
-   *       with a declared byte size for bounds-checking. Because this memory was allocated by
-   *       native code, Panama has no size metadata for it and sets the size to 0, which would make
-   *       {@code getString(0)} throw immediately. Calling {@code reinterpret(Long.MAX_VALUE)}
-   *       grants read access to up to {@code Long.MAX_VALUE} bytes from the base address, allowing
-   *       {@code getString} to scan forward for the null terminator.
-   *   <li>{@link GLib#gFree} - must be called with the <em>original</em> (pre-reinterpret) pointer
-   *       to return the memory to GLib's allocator. Using Java's GC would bypass {@code g_free} and
-   *       corrupt the GLib heap.
-   * </ol>
-   *
    * @param jscValue a {@code JSCValue*} received in the {@code script-message-received} callback
    * @return the string value as a Java {@code String}
    */
@@ -650,10 +618,9 @@ final class WebKit6 {
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
-    // reinterpret is required: Panama has no size metadata for natively-allocated strings,
-    // so the default segment size is 0 and getString would fail with an out-of-bounds error.
+    // reinterpret is required as FFM has no size metadata for natively-allocated strings,
     final var s = raw.reinterpret(Long.MAX_VALUE).getString(0);
-    // Must free with g_free, not the JVM GC - this pointer came from GLib's allocator.
+    // Must free with g_free, as this pointer came from GLib's allocator.
     GLib.gFree(raw);
     return s;
   }
@@ -676,7 +643,7 @@ final class WebKit6 {
       rgba.set(JAVA_FLOAT, 4, green);
       rgba.set(JAVA_FLOAT, 8, blue);
       rgba.set(JAVA_FLOAT, 12, alpha);
-      WEBKIT_WEB_VIEW_SET_BACKGROUND_COLOR.invokeExact(wv, (MemorySegment) rgba);
+      WEBKIT_WEB_VIEW_SET_BACKGROUND_COLOR.invokeExact(wv, rgba);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }

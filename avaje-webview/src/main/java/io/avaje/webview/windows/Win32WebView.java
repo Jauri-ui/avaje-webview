@@ -296,7 +296,8 @@ public final class Win32WebView extends WebviewBase {
     try {
       final var style = (int) Win32.GetWindowLong.invokeExact(hwnd, Win32.GWL_STYLE);
       final var _ =
-          (int) Win32.SetWindowLong.invokeExact(hwnd, Win32.GWL_STYLE, style & ~Win32.WS_MAXIMIZEBOX);
+          (int)
+              Win32.SetWindowLong.invokeExact(hwnd, Win32.GWL_STYLE, style & ~Win32.WS_MAXIMIZEBOX);
       final var _ =
           (int)
               Win32.SetWindowPos.invokeExact(

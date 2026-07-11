@@ -184,15 +184,39 @@ final class WebviewBuilder implements Builder {
     final var os = System.getProperty("os.name", "").toLowerCase();
     if (os.contains("win")) {
       return new Win32WebView(
-          enableDeveloperTools, redirectConsole, width, height, borderless, outline, transparent, parent, moveParentWithChild);
+          enableDeveloperTools,
+          redirectConsole,
+          width,
+          height,
+          borderless,
+          outline,
+          transparent,
+          parent,
+          moveParentWithChild);
     }
     if (os.contains("mac")) {
       return new CocoaWebView(
-          enableDeveloperTools, redirectConsole, width, height, borderless, outline, transparent, parent, moveParentWithChild);
+          enableDeveloperTools,
+          redirectConsole,
+          width,
+          height,
+          borderless,
+          outline,
+          transparent,
+          parent,
+          moveParentWithChild);
     }
     if (os.contains("linux")) {
       return new GtkWebView(
-          enableDeveloperTools, redirectConsole, width, height, borderless, outline, transparent, parent, moveParentWithChild);
+          enableDeveloperTools,
+          redirectConsole,
+          width,
+          height,
+          borderless,
+          outline,
+          transparent,
+          parent,
+          moveParentWithChild);
     }
     throw new UnsupportedOperationException(
         "Unsupported platform: " + System.getProperty("os.name"));

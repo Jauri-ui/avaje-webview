@@ -1,5 +1,6 @@
 package io.avaje.webview.linux;
 
+import java.io.File;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
@@ -17,16 +18,15 @@ import io.avaje.webview.Webview;
 import io.avaje.webview.WebviewBase;
 
 /**
- * Linux implementation using GTK4 + WebKitGTK 6.0 via Panama FFI.
+ * Linux implementation using GTK4 + WebKitGTK 6.0 via FFM.
  *
  * <p>GTK is single-threaded: every GTK/WebKit call must happen on the thread that called gtk_init
  * (tracked as gtkThread). Cross-thread calls queue a Runnable and schedule a GLib idle source via
  * g_idle_add_full, which fires drainDispatchQueue on the GTK thread during the next main-loop
  * iteration.
  *
- * <p>Multiple CocoaWebView windows can share a single GTK main loop: if a second window is created
- * from a non-GTK thread, it dispatches its init onto the GTK thread and blocks on a CountDownLatch
- * until done.
+ * <p>If a second window is created from a non-GTK thread, it dispatches its init onto the GTK
+ * thread and blocks on a CountDownLatch until done.
  */
 public final class GtkWebView extends WebviewBase {
 
@@ -66,7 +66,7 @@ public final class GtkWebView extends WebviewBase {
   private final Arena callbackArena = Arena.ofShared();
 
   // C function pointers (upcall stubs) wired to GLib/GTK signals
-  private MemorySegment dispatchStub; // GSourceFunc — drains pendingDispatches on GTK thread
+  private MemorySegment dispatchStub; // GSourceFunc drains pendingDispatches on GTK thread
   private MemorySegment destroyStub; // "destroy" signal on GtkWindow
   private MemorySegment msgStub; // "script-message-received" signal on WebKitUserContentManager
   private MemorySegment loadChangedStub; // "load-changed" signal on WebKitWebView
@@ -91,7 +91,6 @@ public final class GtkWebView extends WebviewBase {
     openWindows.incrementAndGet();
 
     if (gtkThread == null || gtkThread == Thread.currentThread()) {
-      // First window or same thread as existing GTK loop — init inline.
       gtkThread = Thread.currentThread();
       applyDmabufWorkaround();
       initGtk();
@@ -107,8 +106,7 @@ public final class GtkWebView extends WebviewBase {
             initWindowAndWebView(debug);
             initLatch.countDown();
           });
-      GLib.gIdleAddFull(
-          GLib.G_PRIORITY_HIGH_IDLE, dispatchStub, MemorySegment.NULL, MemorySegment.NULL);
+      GLib.gIdleAddFull(dispatchStub, MemorySegment.NULL, MemorySegment.NULL);
       try {
         initLatch.await();
       } catch (final InterruptedException e) {
@@ -154,8 +152,7 @@ public final class GtkWebView extends WebviewBase {
       doGtkClose();
     } else {
       pendingDispatches.add(this::doGtkClose);
-      GLib.gIdleAddFull(
-          GLib.G_PRIORITY_HIGH_IDLE, dispatchStub, MemorySegment.NULL, MemorySegment.NULL);
+      GLib.gIdleAddFull(dispatchStub, MemorySegment.NULL, MemorySegment.NULL);
     }
   }
 
@@ -168,7 +165,7 @@ public final class GtkWebView extends WebviewBase {
     }
     if (webView != null && webView.address() != 0L) {
       // This g_object_unref balances the g_object_ref_sink from initWindowAndWebView.
-      // gtk_window_set_child() does NOT take ownership of the child widget — it holds its own
+      // gtk_window_set_child() does NOT take ownership of the child widget. It holds its own
       // ref through the GtkWidget parent-child hierarchy. After gtk_window_destroy, the parent
       // releases the child's GtkWidget ref, but our explicit ref (from the sink) would keep the
       // WebKitWebView alive indefinitely unless we release it here.
@@ -282,9 +279,7 @@ public final class GtkWebView extends WebviewBase {
     } else {
       // Send to GTK thread via GLib.
       pendingDispatches.add(r);
-      // G_PRIORITY_HIGH_IDLE fires before redraws but after I/O; keeps the UI responsive.
-      GLib.gIdleAddFull(
-          GLib.G_PRIORITY_HIGH_IDLE, dispatchStub, MemorySegment.NULL, MemorySegment.NULL);
+      GLib.gIdleAddFull(dispatchStub, MemorySegment.NULL, MemorySegment.NULL);
     }
   }
 
@@ -314,10 +309,6 @@ public final class GtkWebView extends WebviewBase {
     }
     WebKit6.webkitUcmRemoveAllScripts(ucManager);
   }
-
-  // -------------------------------------------------------------------------
-  // Webview — appearance/chrome
-  // -------------------------------------------------------------------------
 
   @Override
   public void setDarkAppearance(boolean shouldAppearDark) {
@@ -353,12 +344,8 @@ public final class GtkWebView extends WebviewBase {
     // gtk_window_set_icon_name() works with icon themes, not arbitrary paths.
   }
 
-  // -------------------------------------------------------------------------
-  // Upcall stub targets — called FROM native code via GLib signal dispatch
-  // -------------------------------------------------------------------------
-
   /**
-   * GSourceFunc callback — drains the pending dispatch queue on the GTK main thread. Returns
+   * GSourceFunc callback that drains the pending dispatch queue on the GTK main thread. Returns
    * G_SOURCE_REMOVE (0) so GLib removes the idle source after one invocation. We add a fresh idle
    * source per dispatch(), so there's no need to repeat.
    */
@@ -369,10 +356,7 @@ public final class GtkWebView extends WebviewBase {
     return 0; // G_SOURCE_REMOVE
   }
 
-  /**
-   * "destroy" signal handler for the GtkWindow. GTK emits this after the window is torn down; at
-   * this point the GtkWindow* is no longer usable, so we null it out and signal waiters.
-   */
+  /** "destroy" signal handler for the GtkWindow after the window is torn down. */
   @SuppressWarnings("unused")
   public void onWindowDestroy(MemorySegment widget, MemorySegment ignoredData) {
     window = MemorySegment.NULL;
@@ -391,8 +375,8 @@ public final class GtkWebView extends WebviewBase {
   }
 
   /**
-   * "load-changed" signal on WebKitWebView. Shows the window the first time {@code
-   * WEBKIT_LOAD_FINISHED} fires so it only appears once content is ready.
+   * Shows the window the first time {@code WEBKIT_LOAD_FINISHED} fires so it only appears once
+   * content is ready.
    */
   @SuppressWarnings("unused")
   public void onLoadChanged(MemorySegment wv, int loadEvent, MemorySegment data) {
@@ -414,7 +398,7 @@ public final class GtkWebView extends WebviewBase {
     // Wayland is fine
     // no NVIDIA driver
     if (System.getenv("WAYLAND_DISPLAY") != null
-        || !new java.io.File("/sys/module/nvidia").isDirectory()
+        || !new File("/sys/module/nvidia").isDirectory()
         || System.getenv("WEBKIT_DISABLE_DMABUF_RENDERER") != null) {
       return; // already set
     }
@@ -503,7 +487,11 @@ public final class GtkWebView extends WebviewBase {
   private void initWindowAndWebView(boolean debug) {
     window = Gtk4.gtkWindowNew();
     if (borderless) {
-      Gtk4.gtkWindowSetDecorated(window, false);
+      if (outline) {
+        Gtk4.gtkWindowHideTitlebar(window);
+      } else {
+        Gtk4.gtkWindowSetDecorated(window, false);
+      }
     }
     if (transparent) {
       Gtk4.gtkMakeWindowTransparent(window);
@@ -511,7 +499,9 @@ public final class GtkWebView extends WebviewBase {
     GLib.gSignalConnect(window, "destroy", destroyStub, MemorySegment.NULL);
     if (parentWindow.address() != 0L) {
       Gtk4.gtkWindowSetTransientFor(window, parentWindow);
-      Gtk4.gtkWindowSetModal(window, true);
+      if (moveParentWithChild) {
+        Gtk4.gtkWindowSetModal(window, true);
+      }
       Gtk4.gtkWidgetSetSensitive(parentWindow, false);
     }
 
@@ -532,7 +522,7 @@ public final class GtkWebView extends WebviewBase {
       WebKit6.webkitUcmRegisterHandler(ucManager, a.allocateFrom(HANDLER_NAME));
     }
     // GLib signal detail syntax: "signal-name::detail". The ::__webview__ detail causes GLib to
-    // fire this connection only when the handler name matches — WebKitGTK uses detail-based
+    // fire this connection only when the handler name matches. WebKitGTK uses detail-based
     // multiplexing to route messages from different named handlers through a single signal type.
     GLib.gSignalConnect(
         ucManager, "script-message-received::" + HANDLER_NAME, msgStub, MemorySegment.NULL);

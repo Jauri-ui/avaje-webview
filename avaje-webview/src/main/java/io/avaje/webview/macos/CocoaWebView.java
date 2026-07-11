@@ -72,13 +72,7 @@ public final class CocoaWebView extends WebviewBase {
   // NSWindowStyleMaskFullSizeContentView: content view extends under the title bar
   private static final long NS_FULL_SIZE_CONTENT_VIEW = 0x8000L;
 
-  /**
-   * NSBackingStoreBuffered = 2 - the only backing store type on modern macOS.
-   *
-   * <p>The other enum values ({@code NSBackingStoreRetained = 0}, {@code NSBackingStoreNonretained
-   * = 1}) were removed from AppKit. Passing any value other than 2 causes an exception at window
-   * creation time on macOS 10.13+.
-   */
+  /** NSBackingStoreBuffered = 2. The only backing store type on modern macOS. */
   private static final long NS_BACKING_BUFFERED = 2L;
 
   /**
@@ -375,11 +369,13 @@ public final class CocoaWebView extends WebviewBase {
       }
 
       final long behavior =
-          ((MemorySegment) MSG_SEND_0.invokeExact(nsWindow, sel(a, "collectionBehavior"))).address();
+          ((MemorySegment) MSG_SEND_0.invokeExact(nsWindow, sel(a, "collectionBehavior")))
+              .address();
       Linker.nativeLinker()
           .downcallHandle(
               MSG_SEND_ADDR,
-              FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG))
+              FunctionDescriptor.ofVoid(
+                  ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG))
           .invokeExact(nsWindow, sel(a, "setCollectionBehavior:"), behavior | (1L << 9));
     } catch (final Throwable t) {
       throw new RuntimeException(t);
@@ -640,7 +636,8 @@ public final class CocoaWebView extends WebviewBase {
 
       syncMoving = true;
       try {
-        ObjC.MSG_SEND_SET_SIZE.invokeExact(parentWindow, sel(a, "setFrameOrigin:"), px + cdx, py + cdy);
+        ObjC.MSG_SEND_SET_SIZE.invokeExact(
+            parentWindow, sel(a, "setFrameOrigin:"), px + cdx, py + cdy);
       } finally {
         syncMoving = false;
       }
@@ -886,7 +883,9 @@ public final class CocoaWebView extends WebviewBase {
                     FunctionDescriptor.ofVoid(
                         ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
         boolMh.invokeExact(nsWindow, sel(a, "setOpaque:"), 0);
-        sendVoid1(nsWindow, sel(a, "setBackgroundColor:"),
+        sendVoid1(
+            nsWindow,
+            sel(a, "setBackgroundColor:"),
             send0(ObjC.getClass(a, "NSColor"), sel(a, "clearColor")));
         // Prevent WKWebView from painting its default white fill.
         final var falseNum =
@@ -904,8 +903,12 @@ public final class CocoaWebView extends WebviewBase {
             .downcallHandle(
                 MSG_SEND_ADDR,
                 FunctionDescriptor.ofVoid(
-                    ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS))
-            .invokeExact(wkWebView, sel(a, "setValue:forKey:"), falseNum, nsString(a, "drawsBackground"));
+                    ValueLayout.ADDRESS,
+                    ValueLayout.ADDRESS,
+                    ValueLayout.ADDRESS,
+                    ValueLayout.ADDRESS))
+            .invokeExact(
+                wkWebView, sel(a, "setValue:forKey:"), falseNum, nsString(a, "drawsBackground"));
       }
 
       if (parentWindow.address() != 0) {
@@ -924,7 +927,9 @@ public final class CocoaWebView extends WebviewBase {
           MacOSHelper.addChildWindow(parentWindow, nsWindow);
         } else {
           final var frameSel = sel(a, "frame");
-          final var cf = (MemorySegment) ObjC.MSG_SEND_GET_FRAME.invokeExact((SegmentAllocator) a, nsWindow, frameSel);
+          final var cf =
+              (MemorySegment)
+                  ObjC.MSG_SEND_GET_FRAME.invokeExact((SegmentAllocator) a, nsWindow, frameSel);
           childLastX = cf.get(ValueLayout.JAVA_DOUBLE, 0);
           childLastY = cf.get(ValueLayout.JAVA_DOUBLE, 8);
         }

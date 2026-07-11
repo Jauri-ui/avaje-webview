@@ -237,9 +237,7 @@ public abstract sealed class WebviewBase implements Webview
         () -> {
           rebuildBindScript();
           evalImpl(
-              "if (window.__webview__) { window.__webview__.onUnbind("
-                  + jsonEscape(name)
-                  + "); }");
+              "if (window.__webview__) { window.__webview__.onUnbind(" + jsonEscape(name) + "); }");
         });
   }
 

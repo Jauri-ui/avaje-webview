@@ -76,7 +76,7 @@ final class GLib {
    *   <li>{@code context = NULL} - use the thread-default context, which is the one {@code
    *       gtk_init} installed on the calling thread.
    *   <li>{@code may_block = 1} - park the OS thread in {@code epoll_wait} (or equivalent) until at
-   *       least one event arrives; saves CPU vs. busy-polling.
+   *       least one event arrives.
    *   <li>{@code may_block = 0} - process only events already queued; return immediately if none.
    * </ul>
    *
@@ -114,10 +114,10 @@ final class GLib {
   /**
    * {@code g_free(gpointer mem) -> void}
    *
-   * <p>Frees memory that was allocated by GLib's own allocator (which may not be the system {@code
-   * malloc}). <em>Must</em> be used for any {@code gchar*} or other pointer returned by a
-   * GLib/GObject/WebKitGTK function that says the caller owns it - using Java's garbage collector
-   * or the system {@code free()} would corrupt the GLib heap.
+   * <p>Frees memory that was allocated by GLib's own allocator. <em>Must</em> be used for any
+   * {@code gchar*} or other pointer returned by a GLib/GObject/WebKitGTK function that says the
+   * caller owns it. Using Java's garbage collector or the system {@code free()} would corrupt the
+   * GLib heap.
    */
   private static final MethodHandle G_FREE = downcall("g_free", FunctionDescriptor.ofVoid(ADDRESS));
 
@@ -177,10 +177,6 @@ final class GLib {
    * <p>Connects a C callback to a GObject signal. Returns a handler ID (we discard it here;
    * disconnection is done by data pointer via {@link #G_SIGNAL_HANDLERS_DISCONNECT_MATCHED}).
    *
-   * <p>We use {@code connect_data} rather than the simpler macro {@code g_signal_connect} because
-   * the macro expands to {@code connect_data} anyway, and calling the real function directly gives
-   * us a stable, unambiguous Panama target:
-   *
    * <ul>
    *   <li>5th arg {@code destroy_data} ({@code GClosureNotify}) - {@code NULL}; we don't need
    *       notification when the closure is destroyed.
@@ -204,11 +200,6 @@ final class GLib {
    *
    * <p>Disconnects all signal handlers on {@code instance} whose attributes match the given
    * criteria. Only bits set in {@code mask} are compared; others are ignored.
-   *
-   * <p>We always pass {@code mask = G_SIGNAL_MATCH_DATA} ({@link #G_SIGNAL_MATCH_DATA}), meaning
-   * only the {@code data} pointer is compared. This lets us disconnect <em>all</em> handlers we
-   * registered (regardless of which signal or which function) by passing the same {@code data}
-   * value we used in {@link #G_SIGNAL_CONNECT_DATA}.
    *
    * <p>Returns the number of handlers actually disconnected.
    */
@@ -251,17 +242,14 @@ final class GLib {
    * <p>Safe to call from any thread. The stub fires on the GTK thread during the next main-loop
    * iteration at or after {@link #G_PRIORITY_HIGH_IDLE}.
    *
-   * @param priority scheduling priority (lower = higher priority); use {@link
-   *     #G_PRIORITY_HIGH_IDLE}
    * @param fn a {@code GSourceFunc} upcall stub - a C function pointer created by Panama
    * @param data user data passed to {@code fn}; we always pass {@code NULL} because the stub
    *     captures {@code this} via {@code bindTo}
    * @param notify {@code GDestroyNotify} called when source is removed; always {@code NULL}
    */
-  static void gIdleAddFull(
-      int priority, MemorySegment fn, MemorySegment data, MemorySegment notify) {
+  static void gIdleAddFull(MemorySegment fn, MemorySegment data, MemorySegment notify) {
     try {
-      final var _ = (int) G_IDLE_ADD_FULL.invokeExact(priority, fn, data, notify);
+      final var _ = (int) G_IDLE_ADD_FULL.invokeExact(G_PRIORITY_HIGH_IDLE, fn, data, notify);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
@@ -344,13 +332,6 @@ final class GLib {
 
   /**
    * Connects a C callback upcall stub to a named signal on a GObject instance.
-   *
-   * <p>The signal name string only needs to live for the duration of this call, so we allocate it
-   * in a {@code Arena.ofConfined()} that is closed by the try-with-resources before the method
-   * returns. This avoids leaking a permanent off-heap buffer for a transient C string.
-   *
-   * <p>The returned handler ID is discarded; if disconnection is ever needed use {@link
-   * #gSignalHandlersDisconnectByData}.
    *
    * @param instance the GObject to connect the signal on
    * @param signal the signal name, optionally with a detail suffix (e.g. {@code

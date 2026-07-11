@@ -354,8 +354,8 @@ public interface Webview extends Closeable, Runnable {
     /**
      * Marks this window as owned by {@code parent} and optionally locks their positions together.
      *
-     * <p>When {@code moveParentWithChild} is {@code true}, dragging the child window also moves
-     * the parent by the same delta, keeping them visually locked.
+     * <p>When {@code moveParentWithChild} is {@code true}, dragging the child window also moves the
+     * parent by the same delta, keeping them visually locked.
      *
      * @param parent the {@code Webview} that should be blocked while this window is open
      * @param moveParentWithChild {@code true} to synchronise parent position with child
@@ -422,8 +422,8 @@ public interface Webview extends Closeable, Runnable {
     Builder resizable(boolean resizable);
 
     /**
-     * Enables a transparent window background so web content with a transparent or
-     * semi-transparent CSS background shows through to the desktop. Defaults to {@code false}.
+     * Enables a transparent window background so web content with a transparent or semi-transparent
+     * CSS background shows through to the desktop. Defaults to {@code false}.
      *
      * @param transparent {@code true} to enable transparency
      * @return this builder

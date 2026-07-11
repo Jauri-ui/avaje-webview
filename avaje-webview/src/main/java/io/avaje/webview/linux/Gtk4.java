@@ -167,6 +167,23 @@ final class Gtk4 {
       downcall("gtk_window_set_decorated", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
 
   /**
+   * {@code gtk_window_set_titlebar(GtkWindow* window, GtkWidget* titlebar) -> void}
+   *
+   * <p>Replaces the window's title bar widget. Used to swap in a zero-height {@code GtkBox} so the
+   * window keeps its decorated=true
+   */
+  private static final MethodHandle GTK_WINDOW_SET_TITLEBAR =
+      downcall("gtk_window_set_titlebar", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
+
+  /**
+   * {@code gtk_box_new(GtkOrientation orientation, gint spacing) -> GtkWidget*}
+   *
+   * <p>Used only to build the zero-height placeholder titlebar for outline mode.
+   */
+  private static final MethodHandle GTK_BOX_NEW =
+      downcall("gtk_box_new", FunctionDescriptor.of(ADDRESS, JAVA_INT, JAVA_INT));
+
+  /**
    * {@code gtk_native_get_surface(GtkNative* self) -> GdkSurface*}
    *
    * <p>Every realized top-level {@code GtkWindow} implements {@code GtkNative}; this returns its
@@ -229,10 +246,7 @@ final class Gtk4 {
   /**
    * {@code gtk_widget_set_size_request(GtkWidget* widget, gint width, gint height) -> void}
    *
-   * <p>Sets the minimum size of a widget. GTK4 removed {@code gtk_window_set_geometry_hints()}
-   * which was the GTK3 API for constraining minimum window dimensions. The GTK4 replacement is to
-   * call {@code gtk_widget_set_size_request} on the <em>content widget</em> (here the
-   * WebKitWebView), which propagates the constraint upward to the window during layout.
+   * <p>Sets the minimum size of a widget.
    *
    * <p>Passing {@code -1} for either dimension means "no minimum" on that axis.
    */
@@ -259,7 +273,7 @@ final class Gtk4 {
    * <p>Returns the singleton {@code GtkSettings} object for the default display. Used to set {@code
    * gtk-application-prefer-dark-theme} when {@code setDarkAppearance(true)} is called.
    *
-   * <p><b>Reference semantics:</b> this is a <em>borrowed</em> reference — do NOT call {@code
+   * <p><b>Reference semantics:</b> this is a <em>borrowed</em> reference, do NOT call {@code
    * g_object_unref} on it. The settings object is owned by GTK and lives for the process lifetime.
    *
    * <p>Returns {@code NULL} if GTK has not been initialized, hence the null-address guard in {@link
@@ -304,14 +318,12 @@ final class Gtk4 {
    * {@code gtk_css_provider_load_from_data(GtkCssProvider* provider, const char* data, gssize
    * length) -> void}
    *
-   * <p>Parses {@code data} as CSS and loads it into {@code provider}. GTK4 dropped the {@code
-   * GError**} out-param that GTK3 had; parse errors are reported asynchronously via the
-   * provider's {@code "parsing-error"} signal, which we don't connect to since our stylesheet is a
-   * fixed, known-valid literal.
+   * <p>Parses {@code data} as CSS and loads it into {@code provider}.
    */
   private static final MethodHandle GTK_CSS_PROVIDER_LOAD_FROM_DATA =
       downcall(
-          "gtk_css_provider_load_from_data", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_LONG));
+          "gtk_css_provider_load_from_data",
+          FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_LONG));
 
   /**
    * {@code gtk_style_context_add_provider_for_display(GdkDisplay* display, GtkStyleProvider*
@@ -336,9 +348,6 @@ final class Gtk4 {
   /**
    * Initializes GTK and connects to the display, returning {@code false} if no display is
    * available.
-   *
-   * <p>Unlike {@code gtk_init()}, this variant does not abort the process on failure, so callers
-   * can throw a meaningful exception.
    */
   static boolean gtkInitCheck() {
     try {
@@ -395,8 +404,8 @@ final class Gtk4 {
   /**
    * Enables or disables user resizing of the window.
    *
-   * <p>GTK's {@code gboolean} is a C {@code int}, so we convert the Java {@code boolean} to {@code
-   * 1}/{@code 0} before calling the native function.
+   * <p>GTK's {@code gboolean} is a C {@code int}, so we convert to {@code 1}/{@code 0} before
+   * calling the native function.
    *
    * @param window a {@code GtkWindow*}
    * @param resizable {@code true} to allow user resizing; {@code false} to fix the size
@@ -536,6 +545,35 @@ final class Gtk4 {
   }
 
   /**
+   * Replaces {@code window}'s titlebar widget with a zero-height {@code GtkBox}, so the window
+   * stays decorated (keeping the CSD shadow/rounded corners/resize border) but draws no visible
+   * title bar.
+   *
+   * @param window a {@code GtkWindow*}
+   */
+  static void gtkWindowHideTitlebar(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      final var box =
+          (MemorySegment) GTK_BOX_NEW.invokeExact(0 /* GTK_ORIENTATION_HORIZONTAL */, 0);
+      GTK_WIDGET_ADD_CSS_CLASS.invokeExact(box, a.allocateFrom("webview-hidden-titlebar"));
+      GTK_WINDOW_SET_TITLEBAR.invokeExact(window, box);
+
+      final var provider = (MemorySegment) GTK_CSS_PROVIDER_NEW.invokeExact();
+      final var css =
+          a.allocateFrom(
+              "box.webview-hidden-titlebar { min-height: 0; min-width: 0; padding: 0; margin:"
+                  + " 0; border: none; box-shadow: none; background: transparent; }");
+      GTK_CSS_PROVIDER_LOAD_FROM_DATA.invokeExact(provider, css, (long) -1);
+      final var display = (MemorySegment) GDK_DISPLAY_GET_DEFAULT.invokeExact();
+      GTK_STYLE_CONTEXT_ADD_PROVIDER_FOR_DISPLAY.invokeExact(
+          display, provider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+      GLib.gObjectUnref(provider);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
    * Begins a native window-move grab on {@code window}'s toplevel surface, using the default seat's
    * current pointer position as the drag origin and {@code GDK_CURRENT_TIME} (0) as the timestamp,
    * since the triggering click was consumed by an unrelated JS event rather than a live GDK event
@@ -569,7 +607,7 @@ final class Gtk4 {
   }
 
   /**
-   * Shows or hides a widget. GTK's {@code gboolean} is a C {@code int}; we convert.
+   * Shows or hides a widget.
    *
    * @param widget a {@code GtkWidget*}
    * @param visible {@code true} to show; {@code false} to hide
@@ -634,9 +672,9 @@ final class Gtk4 {
    * (desktop, other windows) shows through wherever neither the window chrome nor the page content
    * paints an opaque pixel.
    *
-   * <p>This only affects the GTK-drawn window background; the caller must separately clear
-   * WebKit's own opaque base fill via {@link WebKit6#webkitWebViewSetBackgroundColor}, otherwise
-   * the page itself still renders an opaque white rectangle over the (now transparent) window.
+   * <p>This only affects the GTK-drawn window background; the caller must separately clear WebKit's
+   * own opaque base fill via {@link WebKit6#webkitWebViewSetBackgroundColor}, otherwise the page
+   * itself still renders an opaque white rectangle over the (now transparent) window.
    *
    * <p>Requires a compositor that supports an alpha channel for client windows: this works
    * out-of-the-box on Wayland and on X11 with a compositing manager (e.g. picom) running. Without
@@ -646,10 +684,11 @@ final class Gtk4 {
    */
   static void gtkMakeWindowTransparent(MemorySegment window) {
     try (var a = Arena.ofConfined()) {
-      GTK_WIDGET_ADD_CSS_CLASS.invokeExact(window, (MemorySegment) a.allocateFrom("webview-transparent"));
+      GTK_WIDGET_ADD_CSS_CLASS.invokeExact(window, a.allocateFrom("webview-transparent"));
       final var provider = (MemorySegment) GTK_CSS_PROVIDER_NEW.invokeExact();
-      final var css = a.allocateFrom("window.webview-transparent { background-color: rgba(0,0,0,0); }");
-      GTK_CSS_PROVIDER_LOAD_FROM_DATA.invokeExact(provider, (MemorySegment) css, (long) -1);
+      final var css =
+          a.allocateFrom("window.webview-transparent { background-color: rgba(0,0,0,0); }");
+      GTK_CSS_PROVIDER_LOAD_FROM_DATA.invokeExact(provider, css, (long) -1);
       final var display = (MemorySegment) GDK_DISPLAY_GET_DEFAULT.invokeExact();
       GTK_STYLE_CONTEXT_ADD_PROVIDER_FOR_DISPLAY.invokeExact(
           display, provider, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);

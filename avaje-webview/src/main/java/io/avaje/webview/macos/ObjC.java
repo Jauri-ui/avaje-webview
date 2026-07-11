@@ -46,12 +46,7 @@ final class ObjC {
    * {@code sel_registerName(const char* str) -> SEL}
    *
    * <p>Interns {@code str} in a process-global selector table and returns a stable {@code SEL}
-   * pointer. Calling this twice with the same string is cheap (a hash lookup) and returns the same
-   * pointer both times, so caching selectors is optional. The returned pointer is valid for the
-   * lifetime of the process.
-   *
-   * <p>In Obj-C source this is the {@code @selector(name)} directive; we must call the C API
-   * directly since we have no Obj-C compiler.
+   * pointer.
    */
   private static final MethodHandle SEL_REGISTER_NAME =
       downcall(OBJC_LIB, "sel_registerName", FunctionDescriptor.of(ADDRESS, ADDRESS));
@@ -148,8 +143,8 @@ final class ObjC {
    * {@code -[NSWindow initWithContentRect:styleMask:backing:defer:]}
    *
    * <p>{@code NSRect} is a C struct {@code {CGFloat x, CGFloat y, CGFloat width, CGFloat height}}.
-   * On the AArch64 ABI (and x86-64 System V ABI) a small struct like this is passed in floating-
-   * point registers as four consecutive {@code double} values.
+   * A small struct like this is passed in floating- point registers as four consecutive {@code
+   * double} values.
    *
    * <p>Parameter breakdown:
    *
@@ -238,12 +233,11 @@ final class ObjC {
    * {@code -[NSWindow setMinSize:] / -[NSWindow setMaxSize:] -> void}
    *
    * <p>{@code NSSize} is a C struct {@code {CGFloat width, CGFloat height}} - two consecutive
-   * doubles passed inline in floating-point registers on the AArch64 and x86-64 ABIs. Both {@code
-   * -setMinSize:} and {@code -setMaxSize:} share this descriptor.
+   * doubles passed inline in floating-point registers. Both {@code -setMinSize:} and {@code
+   * -setMaxSize:} share this descriptor.
    *
    * <p>Passing {@code (0.0, 0.0)} to {@code setMaxSize:} is interpreted by AppKit as "no maximum
-   * size constraint" - AppKit treats a zero NSSize as unconstrained for max, not as a zero-pixel
-   * maximum.
+   * size constraint".
    */
   static final MethodHandle MSG_SEND_SET_SIZE =
       LINKER.downcallHandle(
@@ -252,10 +246,9 @@ final class ObjC {
   /**
    * {@code -[NSWindow setContentSize:] -> void}
    *
-   * <p>Structurally identical to {@link #MSG_SEND_SET_SIZE} (two inline doubles for NSSize). A
-   * separate handle exists to distinguish {@code setContentSize:} from {@code setMinSize:} / {@code
-   * setMaxSize:} at call sites - they do different things: this sets the current window content
-   * area size, while setMinSize/setMaxSize constrain the resizable range.
+   * <p>Structurally identical to {@link #MSG_SEND_SET_SIZE} (two inline doubles for NSSize). This
+   * sets the current window content area size, while setMinSize/setMaxSize constrain the resizable
+   * range.
    */
   static final MethodHandle MSG_SEND_SET_CONTENT_SIZE =
       LINKER.downcallHandle(
@@ -280,7 +273,7 @@ final class ObjC {
   /**
    * {@code -[NSView initWithFrame:] -> id}
    *
-   * <p>Same {@code NSRect}-as-four-inline-doubles ABI as {@link #MSG_SEND_NSWINDOW_INIT}.This must
+   * <p>Same {@code NSRect}-as-four-inline-doubles ABI as {@link #MSG_SEND_NSWINDOW_INIT}. This must
    * be called on every freshly allocated {@code NSView} before use.
    */
   static final MethodHandle MSG_SEND_INIT_WITH_FRAME =
@@ -316,12 +309,7 @@ final class ObjC {
 
   /**
    * Interns a selector string and returns the {@code SEL} pointer: {@code sel_registerName(name)}.
-   *
-   * <p>SELs are process-global interned identifiers. Calling this twice with the same string
-   * returns the same pointer, so caching is optional - the cost is only a hash lookup, not an
-   * allocation. The returned SEL is valid for the process lifetime.
-   *
-   * <p>Equivalent to the ObjC compiler directive {@code @selector(name)}.
+   * The returned SEL is valid for the process lifetime.
    *
    * @param a arena for the temporary C string (freed when the arena closes)
    * @param name selector string, e.g. {@code "initWithFrame:configuration:"}
@@ -419,10 +407,8 @@ final class ObjC {
    * Creates an autoreleased {@code NSString} from a Java string via {@code +[NSString
    * stringWithUTF8String:]}.
    *
-   * <p>The returned object is autoreleased - it is valid until the current autorelease pool drains,
-   * which happens at the top of each run-loop iteration. In practice, this is always safe for
-   * passing as a method argument within the same arena scope, because we never retain the string
-   * past the current call.
+   * <p>The returned object is valid until the current autorelease pool drains, which happens at the
+   * top of each run-loop iteration.
    *
    * @param a arena for the temporary UTF-8 C string argument; must outlive this call
    * @param s the Java string to convert, or {@code null} (returns {@code NULL} segment)
