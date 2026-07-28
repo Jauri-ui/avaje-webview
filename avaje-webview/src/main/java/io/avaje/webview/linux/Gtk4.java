@@ -158,6 +158,33 @@ final class Gtk4 {
       downcall("gtk_window_fullscreen", FunctionDescriptor.ofVoid(ADDRESS));
 
   /**
+   * {@code gtk_window_unmaximize(GtkWindow* window) -> void}
+   *
+   * <p>Asks the window manager to unmaximize the window. No-op if the window is not currently
+   * maximized.
+   */
+  private static final MethodHandle GTK_WINDOW_UNMAXIMIZE =
+      downcall("gtk_window_unmaximize", FunctionDescriptor.ofVoid(ADDRESS));
+
+  /**
+   * {@code gtk_window_unminimize(GtkWindow* window) -> void}
+   *
+   * <p>Asks the window manager to restore a minimized (iconified) window. No-op if the window is
+   * not currently minimized.
+   */
+  private static final MethodHandle GTK_WINDOW_UNMINIMIZE =
+      downcall("gtk_window_unminimize", FunctionDescriptor.ofVoid(ADDRESS));
+
+  /**
+   * {@code gtk_window_unfullscreen(GtkWindow* window) -> void}
+   *
+   * <p>Asks the window manager to leave fullscreen mode. No-op if the window is not currently
+   * fullscreen.
+   */
+  private static final MethodHandle GTK_WINDOW_UNFULLSCREEN =
+      downcall("gtk_window_unfullscreen", FunctionDescriptor.ofVoid(ADDRESS));
+
+  /**
    * {@code gtk_window_set_decorated(GtkWindow* window, gboolean setting) -> void}
    *
    * <p>Controls whether the window manager draws native decorations (title bar, borders,
@@ -525,6 +552,45 @@ final class Gtk4 {
   static void gtkWindowFullscreen(MemorySegment window) {
     try {
       GTK_WINDOW_FULLSCREEN.invokeExact(window);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Asks the window manager to unmaximize the window.
+   *
+   * @param window a {@code GtkWindow*}
+   */
+  static void gtkWindowUnmaximize(MemorySegment window) {
+    try {
+      GTK_WINDOW_UNMAXIMIZE.invokeExact(window);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Asks the window manager to restore a minimized (iconified) window.
+   *
+   * @param window a {@code GtkWindow*}
+   */
+  static void gtkWindowUnminimize(MemorySegment window) {
+    try {
+      GTK_WINDOW_UNMINIMIZE.invokeExact(window);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Asks the window manager to leave fullscreen mode.
+   *
+   * @param window a {@code GtkWindow*}
+   */
+  static void gtkWindowUnfullscreen(MemorySegment window) {
+    try {
+      GTK_WINDOW_UNFULLSCREEN.invokeExact(window);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }

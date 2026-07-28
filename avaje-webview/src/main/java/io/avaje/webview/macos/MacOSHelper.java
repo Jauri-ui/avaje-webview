@@ -57,15 +57,74 @@ final class MacOSHelper {
     }
   }
 
+  /**
+   * Sets fullscreen state to {@code on} by checking {@code -[NSWindow styleMask] &
+   * NSWindowStyleMaskFullScreen (1 << 14)} and calling {@code -[NSWindow toggleFullScreen:]} only
+   * when the current state differs from the requested state. AppKit's toggle is unconditional so a
+   * plain call would invert the state rather than assert it.
+   */
+  static void setFullscreen(MemorySegment nsWindow, boolean on) {
+    try (var a = Arena.ofConfined()) {
+      final var mask =
+          (long)
+              Linker.nativeLinker()
+                  .downcallHandle(
+                      ObjC.MSG_SEND_ADDR,
+                      FunctionDescriptor.of(
+                          ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS))
+                  .invokeExact(nsWindow, sel(a, "styleMask"));
+      final var isFullscreen = (mask & (1L << 14)) != 0L;
+      if (isFullscreen != on) {
+        sendVoid1(nsWindow, sel(a, "toggleFullScreen:"), MemorySegment.NULL);
+      }
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
   static void maximize(MemorySegment nsWindow) {
     try (var a = Arena.ofConfined()) {
       sendVoid1(nsWindow, sel(a, "zoom:"), MemorySegment.NULL);
     }
   }
 
+  /**
+   * Undoes a maximize by calling {@code -[NSWindow zoom:]} only when the window is currently
+   * zoomed. {@code -zoom:} is a toggle in AppKit; guarding on {@code -isZoomed} makes the call an
+   * assertion rather than an inversion. {@code -isZoomed} returns {@code BOOL} (Obj-C {@code
+   * signed char}) so the return descriptor is {@code JAVA_BYTE}.
+   */
+  static void unmaximize(MemorySegment nsWindow) {
+    try (var a = Arena.ofConfined()) {
+      final var isZoomed =
+          (byte)
+              Linker.nativeLinker()
+                  .downcallHandle(
+                      ObjC.MSG_SEND_ADDR,
+                      FunctionDescriptor.of(
+                          ValueLayout.JAVA_BYTE, ValueLayout.ADDRESS, ValueLayout.ADDRESS))
+                  .invokeExact(nsWindow, sel(a, "isZoomed"));
+      if (isZoomed != 0) {
+        sendVoid1(nsWindow, sel(a, "zoom:"), MemorySegment.NULL);
+      }
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
   static void minimize(MemorySegment nsWindow) {
     try (var a = Arena.ofConfined()) {
       sendVoid1(nsWindow, sel(a, "miniaturize:"), MemorySegment.NULL);
+    }
+  }
+
+  /**
+   * Restores a minimized window by calling {@code -[NSWindow deminiaturize:]}. Safe to call when
+   * the window is not currently minimized - AppKit no-ops in that case.
+   */
+  static void unminimize(MemorySegment nsWindow) {
+    try (var a = Arena.ofConfined()) {
+      sendVoid1(nsWindow, sel(a, "deminiaturize:"), MemorySegment.NULL);
     }
   }
 

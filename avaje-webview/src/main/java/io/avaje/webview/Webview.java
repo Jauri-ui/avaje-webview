@@ -196,6 +196,14 @@ public interface Webview extends Closeable, Runnable {
   Webview maximizeWindow();
 
   /**
+   * Restores a previously maximized window to its prior size. No-op if the window is not currently
+   * maximized.
+   *
+   * @return this Webview instance for chaining
+   */
+  Webview unmaximizeWindow();
+
+  /**
    * Switches the webview window to fullscreen mode.
    *
    * @return this Webview instance for chaining
@@ -203,11 +211,26 @@ public interface Webview extends Closeable, Runnable {
   Webview fullscreen();
 
   /**
+   * Enters or exits fullscreen mode. Idempotent: passing the current fullscreen state is a no-op.
+   *
+   * @param on {@code true} to enter fullscreen, {@code false} to exit
+   * @return this Webview instance for chaining
+   */
+  Webview setFullscreen(boolean on);
+
+  /**
    * Minimizes the webview window to the taskbar/dock.
    *
    * @return this Webview instance for chaining
    */
   Webview minimizeWindow();
+
+  /**
+   * Restores a previously minimized window. No-op if the window is not currently minimized.
+   *
+   * @return this Webview instance for chaining
+   */
+  Webview unminimizeWindow();
 
   /**
    * Begins a native window-move operation, as if the user had grabbed the title bar and started

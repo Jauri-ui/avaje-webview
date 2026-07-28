@@ -16,14 +16,36 @@ final class LinuxHelper {
     Gtk4.gtkWindowFullscreen(webview.nativeWindowPointer());
   }
 
+  /**
+   * Sets fullscreen state. GTK's {@code gtk_window_unfullscreen} is a no-op if the window is not
+   * currently fullscreen, so this is idempotent.
+   */
+  static void setFullscreen(Webview webview, boolean on) {
+    if (on) {
+      Gtk4.gtkWindowFullscreen(webview.nativeWindowPointer());
+    } else {
+      Gtk4.gtkWindowUnfullscreen(webview.nativeWindowPointer());
+    }
+  }
+
   /** Asks the window manager to minimize (iconify) the window. */
   static void minimizeWindow(Webview webview) {
     Gtk4.gtkWindowMinimize(webview.nativeWindowPointer());
   }
 
+  /** Asks the window manager to restore a minimized window. */
+  static void unminimizeWindow(Webview webview) {
+    Gtk4.gtkWindowUnminimize(webview.nativeWindowPointer());
+  }
+
   /** Requests the window manager to maximize the window. */
   static void maximizeWindow(Webview webview) {
     Gtk4.gtkWindowMaximize(webview.nativeWindowPointer());
+  }
+
+  /** Requests the window manager to unmaximize the window. */
+  static void unmaximizeWindow(Webview webview) {
+    Gtk4.gtkWindowUnmaximize(webview.nativeWindowPointer());
   }
 
   /** Begins a native window-move grab, as if the user had grabbed the title bar. */
