@@ -202,7 +202,38 @@ public final class Win32WebView extends WebviewBase {
       boolean transparent,
       MemorySegment parentWindow,
       boolean moveParentWithChild) {
+    this(
+        debug,
+        redirectConsole,
+        width,
+        height,
+        borderless,
+        outline,
+        transparent,
+        parentWindow,
+        moveParentWithChild,
+        java.util.Map.of());
+  }
+
+  public Win32WebView(
+      boolean debug,
+      boolean redirectConsole,
+      int width,
+      int height,
+      boolean borderless,
+      boolean outline,
+      boolean transparent,
+      MemorySegment parentWindow,
+      boolean moveParentWithChild,
+      java.util.Map<String, io.avaje.webview.SchemeHandler> schemeHandlers) {
     super(redirectConsole, borderless, outline, transparent, parentWindow, moveParentWithChild);
+    if (schemeHandlers != null && !schemeHandlers.isEmpty()) {
+      // See docs/scheme-handler-windows.md - needs
+      // ICoreWebView2.add_WebResourceRequested + AddWebResourceRequestedFilter(<scheme>://*, ALL).
+      throw new UnsupportedOperationException(
+          "Custom URL scheme handlers are not yet implemented for Windows/WebView2. "
+              + "See docs/scheme-handler-windows.md for the implementation plan.");
+    }
     Win32.coInitialize();
     Win32.enablePerMonitorDpiAwareness();
     buildWndProcStubs();

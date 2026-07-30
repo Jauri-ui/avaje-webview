@@ -39,8 +39,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import io.avaje.webview.SchemeHandler;
+import io.avaje.webview.SchemeRequest;
+import io.avaje.webview.SchemeResponse;
 import io.avaje.webview.Webview;
 import io.avaje.webview.WebviewBase;
+
+import java.util.Map;
 
 /**
  * macOS Cocoa + WKWebView, driven through the Objective-C runtime with Panama.
@@ -174,6 +179,8 @@ public final class CocoaWebView extends WebviewBase {
   private MemorySegment drainStub;
   private final ConcurrentLinkedQueue<Runnable> pendingDispatches = new ConcurrentLinkedQueue<>();
 
+  private final Map<String, SchemeHandler> schemeHandlers;
+
   public CocoaWebView(
       boolean debug,
       boolean redirectConsole,
@@ -184,7 +191,32 @@ public final class CocoaWebView extends WebviewBase {
       boolean transparent,
       MemorySegment parentWindow,
       boolean moveParentWithChild) {
+    this(
+        debug,
+        redirectConsole,
+        width,
+        height,
+        borderless,
+        outline,
+        transparent,
+        parentWindow,
+        moveParentWithChild,
+        Map.of());
+  }
+
+  public CocoaWebView(
+      boolean debug,
+      boolean redirectConsole,
+      int width,
+      int height,
+      boolean borderless,
+      boolean outline,
+      boolean transparent,
+      MemorySegment parentWindow,
+      boolean moveParentWithChild,
+      Map<String, SchemeHandler> schemeHandlers) {
     super(redirectConsole, borderless, outline, transparent, parentWindow, moveParentWithChild);
+    this.schemeHandlers = schemeHandlers == null ? Map.of() : schemeHandlers;
     openWindows.incrementAndGet();
     buildDrainStub();
 
@@ -837,6 +869,19 @@ public final class CocoaWebView extends WebviewBase {
           handler,
           nsString(a, HANDLER_NAME));
 
+      // Register each custom URL scheme handler on the WKWebViewConfiguration.
+      // MUST happen before -[WKWebView initWithFrame:configuration:] - WKWebView copies its
+      // configuration at init time and setURLSchemeHandler:forURLScheme: on the live copy has
+      // no effect. WKWebView refuses to install a duplicate registration for the same scheme,
+      // so the map's uniqueness invariant (Builder-side dedup by lowercased scheme) matters.
+      if (!schemeHandlers.isEmpty()) {
+        final var setSchemeHandlerSel = sel(a, "setURLSchemeHandler:forURLScheme:");
+        for (final var entry : schemeHandlers.entrySet()) {
+          final var schemeHandlerObj = createSchemeHandler(a, entry.getValue());
+          send2(config, setSchemeHandlerSel, schemeHandlerObj, nsString(a, entry.getKey()));
+        }
+      }
+
       if (debug) {
         // developerExtrasEnabled has no setter, but KVC reaches it on every macOS version.
         final var prefs = send0(config, sel(a, "preferences"));
@@ -1212,6 +1257,282 @@ public final class CocoaWebView extends WebviewBase {
       return (MemorySegment)
           ObjC.MSG_SEND_INIT_WITH_FRAME.invokeExact(
               raw, sel(a, "initWithFrame:"), 0d, 0d, 100_000d, 100_000d);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Handles {@code -[WKURLSchemeHandler webView:startURLSchemeTask:]}. Reads the {@code
+   * NSURLRequest} off the task, invokes the Java {@link SchemeHandler}, and streams the response
+   * back via {@code didReceiveResponse:} / {@code didReceiveData:} / {@code didFinish}. On any
+   * failure it fails the task with an {@code NSError}. Runs on the main thread (WebKit invokes
+   * scheme handlers on whatever thread the WKWebView lives on, which for us is main).
+   */
+  @SuppressWarnings("unused")
+  public void onStartURLSchemeTask(
+      MemorySegment self, MemorySegment cmd, MemorySegment webView, MemorySegment task) {
+    SchemeHandler handler = null;
+    for (final var e : schemeHandlerBySelfAddr.entrySet()) {
+      if (e.getKey() == self.address()) {
+        handler = e.getValue();
+        break;
+      }
+    }
+    if (handler == null) {
+      return;
+    }
+    try (var a = Arena.ofConfined()) {
+      final var request = send0(task, sel(a, "request"));
+      final var nsUrl = send0(request, sel(a, "URL"));
+      final var absStr = send0(nsUrl, sel(a, "absoluteString"));
+      final var url = fromNSString(a, absStr);
+      final var method = fromNSString(a, send0(request, sel(a, "HTTPMethod")));
+
+      final SchemeRequest req = new SchemeRequest(url, method, java.util.Map.of(), new byte[0]);
+      final SchemeResponse resp;
+      try {
+        resp = handler.handle(req);
+      } catch (final Throwable t) {
+        failSchemeTask(a, task, t.getMessage() == null ? t.toString() : t.getMessage());
+        return;
+      }
+      if (resp == null) {
+        failSchemeTask(a, task, "SchemeHandler returned null");
+        return;
+      }
+
+      final var headersDict = buildHeaderDict(a, resp);
+      final var httpVersion = nsString(a, "HTTP/1.1");
+      final var response =
+          allocInitHttpResponse(a, nsUrl, resp.status(), httpVersion, headersDict);
+      sendVoid1(task, sel(a, "didReceiveResponse:"), response);
+
+      final var body = resp.body();
+      if (body != null && body.length > 0) {
+        final var data = nsDataFromBytes(a, body);
+        sendVoid1(task, sel(a, "didReceiveData:"), data);
+      }
+      sendVoid0(task, sel(a, "didFinish"));
+    } catch (final Throwable t) {
+      // Never let an exception propagate back into Obj-C - it would crash the process.
+    }
+  }
+
+  /**
+   * Handles {@code -[WKURLSchemeHandler webView:stopURLSchemeTask:]}. Called when WebKit cancels
+   * an in-flight scheme task (page navigated away, tab closed). The current handler is synchronous
+   * so by the time this fires the task is already finished; nothing to cancel.
+   */
+  @SuppressWarnings("unused")
+  public void onStopURLSchemeTask(
+      MemorySegment self, MemorySegment cmd, MemorySegment webView, MemorySegment task) {}
+
+  /**
+   * Builds an {@code NSMutableDictionary} of response headers from a {@link SchemeResponse}. {@code
+   * Content-Type} and {@code Content-Length} are synthesised here so callers don't have to.
+   */
+  private static MemorySegment buildHeaderDict(Arena a, SchemeResponse resp) {
+    final var NSMutableDictionary = ObjC.getClass(a, "NSMutableDictionary");
+    final var dict = send0(send0(NSMutableDictionary, sel(a, "alloc")), sel(a, "init"));
+    final var setObjForKey = sel(a, "setObject:forKey:");
+    if (resp.contentType() != null) {
+      send2(dict, setObjForKey, nsString(a, resp.contentType()), nsString(a, "Content-Type"));
+    }
+    final var body = resp.body();
+    send2(
+        dict,
+        setObjForKey,
+        nsString(a, Integer.toString(body == null ? 0 : body.length)),
+        nsString(a, "Content-Length"));
+    if (resp.headers() != null) {
+      for (final var h : resp.headers().entrySet()) {
+        send2(dict, setObjForKey, nsString(a, h.getValue()), nsString(a, h.getKey()));
+      }
+    }
+    return dict;
+  }
+
+  /**
+   * Wraps {@code -[NSData dataWithBytes:length:]}. Copies {@code bytes} into a Panama arena buffer
+   * and hands it to Cocoa, which further copies it into an autoreleased {@code NSData}.
+   */
+  private static MemorySegment nsDataFromBytes(Arena a, byte[] bytes) {
+    try {
+      final var buf = a.allocate(bytes.length);
+      MemorySegment.copy(bytes, 0, buf, ValueLayout.JAVA_BYTE, 0, bytes.length);
+      final var NSData = ObjC.getClass(a, "NSData");
+      final var mh =
+          Linker.nativeLinker()
+              .downcallHandle(
+                  MSG_SEND_ADDR,
+                  FunctionDescriptor.of(
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.JAVA_LONG));
+      return (MemorySegment)
+          mh.invokeExact(NSData, sel(a, "dataWithBytes:length:"), buf, (long) bytes.length);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Wraps {@code -[NSHTTPURLResponse initWithURL:statusCode:HTTPVersion:headerFields:]}. {@code
+   * statusCode} is an {@code NSInteger} (pointer-sized long); the rest are pointer args.
+   */
+  private static MemorySegment allocInitHttpResponse(
+      Arena a,
+      MemorySegment nsUrl,
+      int statusCode,
+      MemorySegment httpVersion,
+      MemorySegment headerFields) {
+    try {
+      final var NSHTTPURLResponse = ObjC.getClass(a, "NSHTTPURLResponse");
+      final var alloc = send0(NSHTTPURLResponse, sel(a, "alloc"));
+      final var mh =
+          Linker.nativeLinker()
+              .downcallHandle(
+                  MSG_SEND_ADDR,
+                  FunctionDescriptor.of(
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.JAVA_LONG,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS));
+      return (MemorySegment)
+          mh.invokeExact(
+              alloc,
+              sel(a, "initWithURL:statusCode:HTTPVersion:headerFields:"),
+              nsUrl,
+              (long) statusCode,
+              httpVersion,
+              headerFields);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** Fails the scheme task with an {@code NSError} carrying {@code message}. */
+  private static void failSchemeTask(Arena a, MemorySegment task, String message) {
+    try {
+      final var NSError = ObjC.getClass(a, "NSError");
+      final var errMh =
+          Linker.nativeLinker()
+              .downcallHandle(
+                  MSG_SEND_ADDR,
+                  FunctionDescriptor.of(
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.JAVA_LONG,
+                      ValueLayout.ADDRESS));
+      final var domain = nsString(a, "io.avaje.webview.SchemeHandler");
+      final var err =
+          (MemorySegment)
+              errMh.invokeExact(
+                  NSError,
+                  sel(a, "errorWithDomain:code:userInfo:"),
+                  domain,
+                  -1L,
+                  MemorySegment.NULL);
+      sendVoid1(task, sel(a, "didFailWithError:"), err);
+    } catch (final Throwable ignored) {
+    }
+  }
+
+  /**
+   * Map from a synthesised scheme-handler instance's Obj-C address to the Java {@link
+   * SchemeHandler} it should dispatch to. Used inside {@link #onStartURLSchemeTask} to look the
+   * handler up by {@code self}, so all scheme registrations share one Panama upcall stub.
+   */
+  private final java.util.Map<Long, SchemeHandler> schemeHandlerBySelfAddr =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  /**
+   * Synthesises an Obj-C class implementing {@code WKURLSchemeHandler} and instantiates it. The
+   * class implements {@code webView:startURLSchemeTask:} and {@code webView:stopURLSchemeTask:}.
+   * We also record the instance's address so the shared upcall stub can find the right Java
+   * {@link SchemeHandler} at dispatch time.
+   */
+  private MemorySegment createSchemeHandler(Arena a, SchemeHandler javaHandler) {
+    try {
+      final var superCls = ObjC.getClass(a, "NSObject");
+      final var clsName =
+          "JavaWebviewSchemeHandler_"
+              + System.identityHashCode(this)
+              + "_"
+              + System.identityHashCode(javaHandler);
+      final var cls =
+          (MemorySegment) ALLOC_CLASS_PAIR.invokeExact(superCls, a.allocateFrom(clsName), 0L);
+
+      final var startMh =
+          MethodHandles.lookup()
+              .findVirtual(
+                  CocoaWebView.class,
+                  "onStartURLSchemeTask",
+                  MethodType.methodType(
+                      void.class,
+                      MemorySegment.class,
+                      MemorySegment.class,
+                      MemorySegment.class,
+                      MemorySegment.class))
+              .bindTo(this);
+      final var startStub =
+          Linker.nativeLinker()
+              .upcallStub(
+                  startMh,
+                  FunctionDescriptor.ofVoid(
+                      ValueLayout.ADDRESS, // self
+                      ValueLayout.ADDRESS, // cmd
+                      ValueLayout.ADDRESS, // WKWebView*
+                      ValueLayout.ADDRESS), // id<WKURLSchemeTask>
+                  callbackArena);
+
+      final var stopMh =
+          MethodHandles.lookup()
+              .findVirtual(
+                  CocoaWebView.class,
+                  "onStopURLSchemeTask",
+                  MethodType.methodType(
+                      void.class,
+                      MemorySegment.class,
+                      MemorySegment.class,
+                      MemorySegment.class,
+                      MemorySegment.class))
+              .bindTo(this);
+      final var stopStub =
+          Linker.nativeLinker()
+              .upcallStub(
+                  stopMh,
+                  FunctionDescriptor.ofVoid(
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS,
+                      ValueLayout.ADDRESS),
+                  callbackArena);
+
+      final var _ =
+          (byte)
+              CLASS_ADD_METHOD.invokeExact(
+                  cls,
+                  sel(a, "webView:startURLSchemeTask:"),
+                  startStub,
+                  a.allocateFrom("v@:@@"));
+      final var _ =
+          (byte)
+              CLASS_ADD_METHOD.invokeExact(
+                  cls, sel(a, "webView:stopURLSchemeTask:"), stopStub, a.allocateFrom("v@:@@"));
+
+      REGISTER_CLASS_PAIR.invokeExact(cls);
+      final var instance = (MemorySegment) CLASS_CREATE_INSTANCE.invokeExact(cls, 0L);
+      schemeHandlerBySelfAddr.put(instance.address(), javaHandler);
+      return instance;
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }

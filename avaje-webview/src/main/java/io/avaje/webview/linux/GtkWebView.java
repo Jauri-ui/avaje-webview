@@ -93,7 +93,38 @@ public final class GtkWebView extends WebviewBase {
       boolean transparent,
       MemorySegment parentWindow,
       boolean moveParentWithChild) {
+    this(
+        debug,
+        redirectConsole,
+        width,
+        height,
+        borderless,
+        outline,
+        transparent,
+        parentWindow,
+        moveParentWithChild,
+        java.util.Map.of());
+  }
+
+  public GtkWebView(
+      boolean debug,
+      boolean redirectConsole,
+      int width,
+      int height,
+      boolean borderless,
+      boolean outline,
+      boolean transparent,
+      MemorySegment parentWindow,
+      boolean moveParentWithChild,
+      java.util.Map<String, io.avaje.webview.SchemeHandler> schemeHandlers) {
     super(redirectConsole, borderless, outline, transparent, parentWindow, moveParentWithChild);
+    if (schemeHandlers != null && !schemeHandlers.isEmpty()) {
+      // See docs/scheme-handler-linux.md - needs
+      // webkit_web_context_register_uri_scheme with a WebKitURISchemeRequestCallback.
+      throw new UnsupportedOperationException(
+          "Custom URL scheme handlers are not yet implemented for Linux/WebKitGTK. "
+              + "See docs/scheme-handler-linux.md for the implementation plan.");
+    }
     this.initialWidth = width;
     this.initialHeight = height;
     openWindows.incrementAndGet();

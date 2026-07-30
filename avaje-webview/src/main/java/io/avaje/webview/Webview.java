@@ -606,6 +606,34 @@ public interface Webview extends Closeable, Runnable {
     Builder transparent(boolean transparent);
 
     /**
+     * Registers a custom URL scheme handler on this webview.
+     *
+     * <p>Every navigation, {@code <img>} load, {@code fetch()}, XHR, or subresource whose URL
+     * starts with {@code <scheme>://} is intercepted and dispatched to {@code handler} instead of
+     * being resolved over the network. The handler runs on the webview's UI thread.
+     *
+     * <p>Handlers must be registered <em>before</em> {@link #build()}. Every native backend
+     * (WKWebView, WebView2, WebKitGTK) requires registration prior to webview instantiation;
+     * registering after the webview exists is not supported.
+     *
+     * <p>Reserved schemes ({@code http}, {@code https}, {@code file}, {@code about}, {@code data},
+     * {@code javascript}, {@code ws}, {@code wss}, {@code ftp}) cannot be intercepted and will
+     * throw {@link IllegalArgumentException} at build time.
+     *
+     * <p>Scheme names must match {@code [a-z][a-z0-9+.-]*} — lowercase letters, digits, {@code +},
+     * {@code .}, {@code -} — starting with a letter. Case is not significant for lookup but the
+     * registered value must be lowercase.
+     *
+     * @param scheme the URL scheme to intercept, e.g. {@code "app"}, {@code "asset"},
+     *     {@code "tauri"}
+     * @param handler the handler that produces a {@link SchemeResponse} for each intercepted
+     *     request
+     * @return this builder
+     * @throws IllegalArgumentException if {@code scheme} is malformed or reserved
+     */
+    Builder registerSchemeHandler(String scheme, SchemeHandler handler);
+
+    /**
      * Builds the Webview.
      *
      * @return the configured Webview

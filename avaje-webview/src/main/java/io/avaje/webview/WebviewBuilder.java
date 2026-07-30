@@ -1,6 +1,12 @@
 package io.avaje.webview;
 
 import java.lang.foreign.MemorySegment;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 import io.avaje.webview.Webview.Builder;
 import io.avaje.webview.linux.GtkWebView;
@@ -8,6 +14,10 @@ import io.avaje.webview.macos.CocoaWebView;
 import io.avaje.webview.windows.Win32WebView;
 
 final class WebviewBuilder implements Builder {
+
+  private static final Pattern SCHEME_PATTERN = Pattern.compile("[a-z][a-z0-9+.\\-]*");
+  private static final Set<String> RESERVED_SCHEMES =
+      Set.of("http", "https", "file", "about", "data", "javascript", "ws", "wss", "ftp");
 
   private String title;
   private boolean enableDeveloperTools;
@@ -26,6 +36,7 @@ final class WebviewBuilder implements Builder {
   private boolean moveParentWithChild;
   private boolean transparent;
   private int minWidth, minHeight, maxWidth, maxHeight = -1;
+  private final Map<String, SchemeHandler> schemeHandlers = new LinkedHashMap<>();
 
   WebviewBuilder() {}
 
@@ -147,6 +158,25 @@ final class WebviewBuilder implements Builder {
   }
 
   @Override
+  public WebviewBuilder registerSchemeHandler(String scheme, SchemeHandler handler) {
+    Objects.requireNonNull(scheme, "scheme");
+    Objects.requireNonNull(handler, "handler");
+    final var normalised = scheme.toLowerCase(Locale.ROOT);
+    if (!SCHEME_PATTERN.matcher(normalised).matches()) {
+      throw new IllegalArgumentException(
+          "Invalid scheme '"
+              + scheme
+              + "' — must match [a-z][a-z0-9+.-]* (start with a letter, no ':')");
+    }
+    if (RESERVED_SCHEMES.contains(normalised)) {
+      throw new IllegalArgumentException(
+          "Scheme '" + normalised + "' is reserved and cannot be intercepted");
+    }
+    schemeHandlers.put(normalised, handler);
+    return this;
+  }
+
+  @Override
   public Webview build() {
     final WebviewBase view = createForPlatform();
     if (title != null) {
@@ -182,6 +212,7 @@ final class WebviewBuilder implements Builder {
 
   private WebviewBase createForPlatform() {
     final var os = System.getProperty("os.name", "").toLowerCase();
+    final var handlers = Map.copyOf(schemeHandlers);
     if (os.contains("win")) {
       return new Win32WebView(
           enableDeveloperTools,
@@ -192,7 +223,8 @@ final class WebviewBuilder implements Builder {
           outline,
           transparent,
           parent,
-          moveParentWithChild);
+          moveParentWithChild,
+          handlers);
     }
     if (os.contains("mac")) {
       return new CocoaWebView(
@@ -204,7 +236,8 @@ final class WebviewBuilder implements Builder {
           outline,
           transparent,
           parent,
-          moveParentWithChild);
+          moveParentWithChild,
+          handlers);
     }
     if (os.contains("linux")) {
       return new GtkWebView(
@@ -216,7 +249,8 @@ final class WebviewBuilder implements Builder {
           outline,
           transparent,
           parent,
-          moveParentWithChild);
+          moveParentWithChild,
+          handlers);
     }
     throw new UnsupportedOperationException(
         "Unsupported platform: " + System.getProperty("os.name"));
