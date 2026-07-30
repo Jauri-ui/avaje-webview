@@ -551,6 +551,108 @@ public final class CocoaWebView extends WebviewBase {
   }
 
   @Override
+  protected void setPositionImpl(int x, int y) {
+    if (closed) {
+      return;
+    }
+    MacOSHelper.setPosition(nsWindow, x, y);
+  }
+
+  @Override
+  protected void centerImpl() {
+    if (closed) {
+      return;
+    }
+    MacOSHelper.center(nsWindow);
+  }
+
+  @Override
+  public int[] getPosition() {
+    if (closed) {
+      return new int[] {0, 0};
+    }
+    return MacOSHelper.getPosition(nsWindow);
+  }
+
+  @Override
+  protected void showImpl() {
+    if (closed) return;
+    MacOSHelper.show(nsWindow);
+  }
+
+  @Override
+  protected void hideImpl() {
+    if (closed) return;
+    MacOSHelper.hide(nsWindow);
+  }
+
+  @Override
+  protected void setFocusImpl() {
+    if (closed) return;
+    MacOSHelper.setFocus(nsWindow);
+  }
+
+  @Override
+  protected void setAlwaysOnTopImpl(boolean onTop) {
+    if (closed) return;
+    MacOSHelper.setAlwaysOnTop(nsWindow, onTop);
+  }
+
+  @Override
+  protected void setResizableImpl(boolean resizable) {
+    if (closed) return;
+    MacOSHelper.setResizable(nsWindow, resizable);
+  }
+
+  @Override
+  protected void setDecorationsImpl(boolean decorated) {
+    if (closed) return;
+    MacOSHelper.setDecorations(nsWindow, decorated);
+  }
+
+  @Override
+  public boolean isMaximized() {
+    if (closed) return false;
+    return MacOSHelper.isMaximized(nsWindow);
+  }
+
+  @Override
+  public boolean isMinimized() {
+    if (closed) return false;
+    return MacOSHelper.isMinimized(nsWindow);
+  }
+
+  @Override
+  public boolean isFullscreen() {
+    if (closed) return false;
+    return MacOSHelper.isFullscreen(nsWindow);
+  }
+
+  @Override
+  public boolean isVisible() {
+    if (closed) return false;
+    return MacOSHelper.isVisible(nsWindow);
+  }
+
+  @Override
+  public boolean isFocused() {
+    if (closed) return false;
+    return MacOSHelper.isFocused(nsWindow);
+  }
+
+  @Override
+  public boolean isDecorated() {
+    if (closed) return false;
+    return MacOSHelper.isDecorated(nsWindow);
+  }
+
+  @Override
+  public boolean isResizable() {
+    if (closed) return false;
+    return MacOSHelper.isResizable(nsWindow);
+  }
+
+  @Override
   public void setIcon(Path path) {
     dispatchImpl(() -> MacOSHelper.setIcon(path));
   }

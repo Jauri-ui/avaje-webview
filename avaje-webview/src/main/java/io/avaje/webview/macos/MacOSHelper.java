@@ -201,6 +201,265 @@ final class MacOSHelper {
   }
 
   /**
+   * {@code -[NSWindow setFrameTopLeftPoint:]} - moves {@code window} so its top-left corner sits
+   * at logical screen coordinates ({@code x}, {@code y}) measured from the primary screen's
+   * top-left. Cocoa's native coordinate system is bottom-left-origin, so we flip {@code y}
+   * against the primary screen's frame height before handing the point to AppKit.
+   */
+  static void setPosition(MemorySegment window, int x, int y) {
+    try (var a = Arena.ofConfined()) {
+      final var frameSel = sel(a, "frame");
+      final var nsScreenClass = ObjC.getClass(a, "NSScreen");
+      final var mainScreen = send0(nsScreenClass, sel(a, "mainScreen"));
+      final var screenFrame =
+          (MemorySegment)
+              ObjC.MSG_SEND_GET_FRAME.invokeExact((SegmentAllocator) a, mainScreen, frameSel);
+      final double screenH = screenFrame.get(JAVA_DOUBLE, 24);
+      ObjC.MSG_SEND_SET_SIZE.invokeExact(
+          window, sel(a, "setFrameTopLeftPoint:"), (double) x, screenH - y);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Reads {@code -[NSWindow frame]} and converts the bottom-left origin back to a top-left
+   * position measured against the primary screen. Returns {@code {x, y}} in logical pixels.
+   */
+  static int[] getPosition(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      final var frameSel = sel(a, "frame");
+      final var nsScreenClass = ObjC.getClass(a, "NSScreen");
+      final var mainScreen = send0(nsScreenClass, sel(a, "mainScreen"));
+      final var screenFrame =
+          (MemorySegment)
+              ObjC.MSG_SEND_GET_FRAME.invokeExact((SegmentAllocator) a, mainScreen, frameSel);
+      final var winFrame =
+          (MemorySegment)
+              ObjC.MSG_SEND_GET_FRAME.invokeExact((SegmentAllocator) a, window, frameSel);
+      final double screenH = screenFrame.get(JAVA_DOUBLE, 24);
+      final double winX = winFrame.get(JAVA_DOUBLE, 0);
+      final double winYBottom = winFrame.get(JAVA_DOUBLE, 8);
+      final double winH = winFrame.get(JAVA_DOUBLE, 24);
+      final double topLeftY = screenH - (winYBottom + winH);
+      return new int[] {(int) Math.round(winX), (int) Math.round(topLeftY)};
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** {@code -[NSWindow orderFrontRegardless]}: brings {@code window} to the front and shows it. */
+  static void show(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      sendVoid0(window, sel(a, "orderFrontRegardless"));
+    }
+  }
+
+  /** {@code -[NSWindow orderOut:]}: hides {@code window} without destroying it. */
+  static void hide(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      sendVoid1(window, sel(a, "orderOut:"), MemorySegment.NULL);
+    }
+  }
+
+  /**
+   * {@code -[NSWindow makeKeyAndOrderFront:]} plus {@code -[NSApp activateIgnoringOtherApps:YES]}.
+   * The activate call is required for cross-app focus stealing on modern macOS.
+   */
+  static void setFocus(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      sendVoid1(window, sel(a, "makeKeyAndOrderFront:"), MemorySegment.NULL);
+      final var app = send0(ObjC.getClass(a, "NSApplication"), sel(a, "sharedApplication"));
+      Linker.nativeLinker()
+          .downcallHandle(
+              ObjC.MSG_SEND_ADDR,
+              FunctionDescriptor.ofVoid(
+                  ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT))
+          .invokeExact(app, sel(a, "activateIgnoringOtherApps:"), 1);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** NSWindowStyleMaskResizable bit in an NSWindow.styleMask. */
+  private static final long NS_RESIZABLE = 1L << 3;
+
+  /** NSWindowStyleMaskTitled bit in an NSWindow.styleMask. */
+  private static final long NS_TITLED = 1L;
+
+  /** NSWindowStyleMaskFullScreen bit in an NSWindow.styleMask. */
+  private static final long NS_FULLSCREEN = 1L << 14;
+
+  /**
+   * Sets or clears the {@code NSNormalWindowLevel} / {@code NSFloatingWindowLevel} on {@code
+   * window}. NSNormalWindowLevel = 0; NSFloatingWindowLevel = 3.
+   */
+  static void setAlwaysOnTop(MemorySegment window, boolean onTop) {
+    try (var a = Arena.ofConfined()) {
+      Linker.nativeLinker()
+          .downcallHandle(
+              ObjC.MSG_SEND_ADDR,
+              FunctionDescriptor.ofVoid(
+                  ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG))
+          .invokeExact(window, sel(a, "setLevel:"), onTop ? 3L : 0L);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** Reads {@code -[NSWindow styleMask]} as a pointer-sized bitmask. */
+  private static long styleMask(Arena a, MemorySegment window) throws Throwable {
+    return (long)
+        Linker.nativeLinker()
+            .downcallHandle(
+                ObjC.MSG_SEND_ADDR,
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS))
+            .invokeExact(window, sel(a, "styleMask"));
+  }
+
+  /** Writes {@code -[NSWindow setStyleMask:]}. */
+  private static void setStyleMask(Arena a, MemorySegment window, long mask) throws Throwable {
+    Linker.nativeLinker()
+        .downcallHandle(
+            ObjC.MSG_SEND_ADDR,
+            FunctionDescriptor.ofVoid(
+                ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG))
+        .invokeExact(window, sel(a, "setStyleMask:"), mask);
+  }
+
+  /**
+   * Flips the {@code NSWindowStyleMaskResizable} bit on {@code window}'s style mask. Existing
+   * layout/decorations are preserved because we mask only that bit.
+   */
+  static void setResizable(MemorySegment window, boolean resizable) {
+    try (var a = Arena.ofConfined()) {
+      long mask = styleMask(a, window);
+      mask = resizable ? (mask | NS_RESIZABLE) : (mask & ~NS_RESIZABLE);
+      setStyleMask(a, window, mask);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Toggles the titled/decorated bits on {@code window}. On NSWindow the "decorated" concept maps
+   * to the {@code NSWindowStyleMaskTitled} bit and the traffic-light buttons — we flip only the
+   * title bit here since callers that need a fully custom chrome use {@code borderless} at
+   * construction time.
+   */
+  static void setDecorations(MemorySegment window, boolean decorated) {
+    try (var a = Arena.ofConfined()) {
+      long mask = styleMask(a, window);
+      mask = decorated ? (mask | NS_TITLED) : (mask & ~NS_TITLED);
+      setStyleMask(a, window, mask);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** {@code -[NSWindow isZoomed]} → {@code BOOL}. */
+  static boolean isMaximized(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      final var v =
+          (byte)
+              Linker.nativeLinker()
+                  .downcallHandle(
+                      ObjC.MSG_SEND_ADDR,
+                      FunctionDescriptor.of(
+                          ValueLayout.JAVA_BYTE, ValueLayout.ADDRESS, ValueLayout.ADDRESS))
+                  .invokeExact(window, sel(a, "isZoomed"));
+      return v != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** {@code -[NSWindow isMiniaturized]} → {@code BOOL}. */
+  static boolean isMinimized(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      final var v =
+          (byte)
+              Linker.nativeLinker()
+                  .downcallHandle(
+                      ObjC.MSG_SEND_ADDR,
+                      FunctionDescriptor.of(
+                          ValueLayout.JAVA_BYTE, ValueLayout.ADDRESS, ValueLayout.ADDRESS))
+                  .invokeExact(window, sel(a, "isMiniaturized"));
+      return v != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Reads {@code -[NSWindow styleMask]} and tests {@code NSWindowStyleMaskFullScreen} (bit 14).
+   *
+   * <p>AppKit clears this bit at the <em>start</em> of the exit-fullscreen animation, so this
+   * getter transitions to {@code false} slightly before {@link
+   * #setAlwaysOnTop(MemorySegment, boolean)}-style side effects (Dock autohide) actually clear.
+   * That matches how a Tauri client would observe the state.
+   */
+  static boolean isFullscreen(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      return (styleMask(a, window) & NS_FULLSCREEN) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** {@code -[NSWindow isVisible]} → {@code BOOL}. */
+  static boolean isVisible(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      final var v =
+          (byte)
+              Linker.nativeLinker()
+                  .downcallHandle(
+                      ObjC.MSG_SEND_ADDR,
+                      FunctionDescriptor.of(
+                          ValueLayout.JAVA_BYTE, ValueLayout.ADDRESS, ValueLayout.ADDRESS))
+                  .invokeExact(window, sel(a, "isVisible"));
+      return v != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** {@code -[NSWindow isKeyWindow]} → {@code BOOL}. */
+  static boolean isFocused(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      final var v =
+          (byte)
+              Linker.nativeLinker()
+                  .downcallHandle(
+                      ObjC.MSG_SEND_ADDR,
+                      FunctionDescriptor.of(
+                          ValueLayout.JAVA_BYTE, ValueLayout.ADDRESS, ValueLayout.ADDRESS))
+                  .invokeExact(window, sel(a, "isKeyWindow"));
+      return v != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** Tests the {@code NSWindowStyleMaskTitled} bit. */
+  static boolean isDecorated(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      return (styleMask(a, window) & NS_TITLED) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** Tests the {@code NSWindowStyleMaskResizable} bit. */
+  static boolean isResizable(MemorySegment window) {
+    try (var a = Arena.ofConfined()) {
+      return (styleMask(a, window) & NS_RESIZABLE) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
    * Centers {@code nsWindow} relative to {@code parentWindow} by reading both frames and computing
    * the origin that places the child at the center of the parent.
    */

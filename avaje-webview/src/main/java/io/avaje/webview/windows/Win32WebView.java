@@ -505,6 +505,88 @@ public final class Win32WebView extends WebviewBase {
   }
 
   @Override
+  protected void setPositionImpl(int x, int y) {
+    Win32.setPosition(hwnd, x, y);
+  }
+
+  @Override
+  protected void centerImpl() {
+    Win32.centerWindow(hwnd, MemorySegment.NULL);
+  }
+
+  @Override
+  public int[] getPosition() {
+    return Win32.getPosition(hwnd);
+  }
+
+  @Override
+  protected void showImpl() {
+    Win32.showWindow(hwnd, Win32.SW_SHOW);
+  }
+
+  @Override
+  protected void hideImpl() {
+    Win32.showWindow(hwnd, Win32.SW_HIDE);
+  }
+
+  @Override
+  protected void setFocusImpl() {
+    Win32.setForegroundWindow(hwnd);
+  }
+
+  @Override
+  protected void setAlwaysOnTopImpl(boolean onTop) {
+    Win32.setAlwaysOnTop(hwnd, onTop);
+  }
+
+  @Override
+  protected void setResizableImpl(boolean resizable) {
+    Win32.setResizable(hwnd, resizable);
+  }
+
+  @Override
+  protected void setDecorationsImpl(boolean decorated) {
+    Win32.setDecorations(hwnd, decorated);
+  }
+
+  @Override
+  public boolean isMaximized() {
+    return Win32.isMaximized(hwnd);
+  }
+
+  @Override
+  public boolean isMinimized() {
+    return Win32.isMinimized(hwnd);
+  }
+
+  @Override
+  public boolean isFullscreen() {
+    // Win32 has no first-class fullscreen bit; enterFullscreen/exitFullscreen tracks it via the
+    // isFullscreen field. Local variable read to disambiguate from this method.
+    return this.isFullscreen;
+  }
+
+  @Override
+  public boolean isVisible() {
+    return Win32.isVisible(hwnd);
+  }
+
+  @Override
+  public boolean isFocused() {
+    return Win32.isFocused(hwnd);
+  }
+
+  @Override
+  public boolean isDecorated() {
+    return Win32.isDecorated(hwnd);
+  }
+
+  @Override
+  public boolean isResizable() {
+    return Win32.isResizable(hwnd);
+  }
+
+  @Override
   public void setIcon(Path path) {
     final var name = path.getFileName().toString();
     if (!name.endsWith(".ico")) {

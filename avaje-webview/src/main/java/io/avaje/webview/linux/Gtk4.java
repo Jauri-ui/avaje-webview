@@ -194,6 +194,48 @@ final class Gtk4 {
       downcall("gtk_window_set_decorated", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
 
   /**
+   * {@code gtk_window_present(GtkWindow* window) -> void}
+   *
+   * <p>Asks the window manager to raise the window and focus it. Preferred replacement for
+   * {@code gtk_window_activate_focus} and the retired {@code gtk_window_activate_default}.
+   */
+  private static final MethodHandle GTK_WINDOW_PRESENT =
+      downcall("gtk_window_present", FunctionDescriptor.ofVoid(ADDRESS));
+
+  /**
+   * {@code gtk_window_set_keep_above(GtkWindow* window, gboolean setting) -> void}
+   *
+   * <p>Requests the window manager to keep the window above all others. Deprecated in GTK4 and
+   * ignored on Wayland. We still call it under X11 where it works.
+   */
+  private static final MethodHandle GTK_WINDOW_SET_KEEP_ABOVE =
+      downcall("gtk_window_set_keep_above", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
+
+  /** {@code gtk_widget_get_visible(GtkWidget* widget) -> gboolean} */
+  private static final MethodHandle GTK_WIDGET_GET_VISIBLE =
+      downcall("gtk_widget_get_visible", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /** {@code gtk_window_is_active(GtkWindow* window) -> gboolean} */
+  private static final MethodHandle GTK_WINDOW_IS_ACTIVE =
+      downcall("gtk_window_is_active", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /** {@code gtk_window_is_maximized(GtkWindow* window) -> gboolean} */
+  private static final MethodHandle GTK_WINDOW_IS_MAXIMIZED =
+      downcall("gtk_window_is_maximized", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /** {@code gtk_window_is_fullscreen(GtkWindow* window) -> gboolean} */
+  private static final MethodHandle GTK_WINDOW_IS_FULLSCREEN =
+      downcall("gtk_window_is_fullscreen", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /** {@code gtk_window_get_decorated(GtkWindow* window) -> gboolean} */
+  private static final MethodHandle GTK_WINDOW_GET_DECORATED =
+      downcall("gtk_window_get_decorated", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /** {@code gtk_window_get_resizable(GtkWindow* window) -> gboolean} */
+  private static final MethodHandle GTK_WINDOW_GET_RESIZABLE =
+      downcall("gtk_window_get_resizable", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /**
    * {@code gtk_window_set_titlebar(GtkWindow* window, GtkWidget* titlebar) -> void}
    *
    * <p>Replaces the window's title bar widget. Used to swap in a zero-height {@code GtkBox} so the
@@ -605,6 +647,75 @@ final class Gtk4 {
   static void gtkWindowSetDecorated(MemorySegment window, boolean decorated) {
     try {
       GTK_WINDOW_SET_DECORATED.invokeExact(window, decorated ? 1 : 0);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** {@code gtk_window_present(window)}. */
+  static void gtkWindowPresent(MemorySegment window) {
+    try {
+      GTK_WINDOW_PRESENT.invokeExact(window);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * {@code gtk_window_set_keep_above(window, TRUE/FALSE)}. Deprecated in GTK4 and ignored on
+   * Wayland — kept as best-effort under X11.
+   */
+  static void gtkWindowSetKeepAbove(MemorySegment window, boolean onTop) {
+    try {
+      GTK_WINDOW_SET_KEEP_ABOVE.invokeExact(window, onTop ? 1 : 0);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  static boolean gtkWidgetGetVisible(MemorySegment widget) {
+    try {
+      return ((int) GTK_WIDGET_GET_VISIBLE.invokeExact(widget)) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  static boolean gtkWindowIsActive(MemorySegment window) {
+    try {
+      return ((int) GTK_WINDOW_IS_ACTIVE.invokeExact(window)) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  static boolean gtkWindowIsMaximized(MemorySegment window) {
+    try {
+      return ((int) GTK_WINDOW_IS_MAXIMIZED.invokeExact(window)) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  static boolean gtkWindowIsFullscreen(MemorySegment window) {
+    try {
+      return ((int) GTK_WINDOW_IS_FULLSCREEN.invokeExact(window)) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  static boolean gtkWindowGetDecorated(MemorySegment window) {
+    try {
+      return ((int) GTK_WINDOW_GET_DECORATED.invokeExact(window)) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  static boolean gtkWindowGetResizable(MemorySegment window) {
+    try {
+      return ((int) GTK_WINDOW_GET_RESIZABLE.invokeExact(window)) != 0;
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
