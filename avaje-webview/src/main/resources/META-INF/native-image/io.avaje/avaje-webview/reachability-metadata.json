@@ -97,7 +97,7 @@
           "void*",
           "void*",
           "void*",
-          ["jdouble", "jdouble", "jdouble", "jdouble"]
+          "struct(jdouble,jdouble,jdouble,jdouble)"
         ]
       }
     ],
@@ -162,7 +162,7 @@
         ]
       },
       {
-        "returnType": ["jdouble", "jdouble", "jdouble", "jdouble"],
+        "returnType": "struct(jdouble,jdouble,jdouble,jdouble)",
         "parameterTypes": [
           "void*",
           "void*"
