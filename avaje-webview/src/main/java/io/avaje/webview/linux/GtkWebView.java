@@ -70,10 +70,20 @@ public final class GtkWebView extends WebviewBase {
   private MemorySegment destroyStub; // "destroy" signal on GtkWindow
   private MemorySegment msgStub; // "script-message-received" signal on WebKitUserContentManager
   private MemorySegment loadChangedStub; // "load-changed" signal on WebKitWebView
+  private MemorySegment maximizedStub; // "notify::maximized" signal on GtkWindow
+  private MemorySegment surfaceSizeStub; // "notify::width"/"notify::height" on the GdkSurface
 
   private final ConcurrentLinkedQueue<Runnable> pendingDispatches = new ConcurrentLinkedQueue<>();
   private final int initialWidth;
   private final int initialHeight;
+
+  // Max size is advisory in GTK4 (see setMaxSizeImpl); <= 0 means unconstrained on that axis.
+  private volatile int maxWidth = -1;
+  private volatile int maxHeight = -1;
+  /** Guards against queueing a second clamp while one is already pending on the idle queue. */
+  private boolean clampQueued = false;
+  /** Set by {@link #disableMaximizeImpl()}; makes the "notify::maximized" handler veto maximize. */
+  private volatile boolean maximizeDisabled = false;
 
   public GtkWebView(
       boolean debug,
@@ -224,15 +234,43 @@ public final class GtkWebView extends WebviewBase {
     Gtk4.gtkWidgetSetSizeRequest(webView, width, height);
   }
 
+  /**
+   * GTK4 removed geometry hints ({@code gtk_window_set_geometry_hints}), so there is no way to tell
+   * the window manager an upper bound the way {@code -[NSWindow setMaxSize:]} or Win32's {@code
+   * WM_GETMINMAXINFO} do. The maximum is enforced after the fact instead: {@link
+   * #onSurfaceSizeChanged} watches the toplevel surface and {@link #applyMaxSizeClamp} resizes the
+   * window back down whenever it exceeds the limit.
+   *
+   * <p>Consequence: during an interactive resize the window can momentarily exceed the maximum and
+   * snap back, rather than the pointer simply refusing to drag any further. Maximized and fullscreen
+   * states are left alone — that size belongs to the window manager.
+   */
   @Override
   protected void setMaxSizeImpl(int width, int height) {
-    // GTK4 removed geometry hints
-    // No equivalent exists in GTK4 without writing a custom size-allocate handler.
+    maxWidth = width;
+    maxHeight = height;
+    if (closed) {
+      return;
+    }
+    applyMaxSizeClamp();
   }
 
+  /**
+   * GTK4 cannot remove the maximize button from a window-manager-drawn title bar (only a {@code
+   * GtkHeaderBar} exposes {@code decoration-layout}, and this window has none), and the maximize
+   * action is also reachable by double-clicking the title bar or a keyboard shortcut. So maximize is
+   * vetoed rather than hidden: {@link #onMaximizedChanged} un-maximizes as soon as the state flips.
+   * This mirrors Cocoa's {@code windowShouldZoom: NO}, minus the ability to grey out the button.
+   */
   @Override
   protected void disableMaximizeImpl() {
-    // GTK4 has no API to disable only the maximize button without subclassing or CSS hacks
+    maximizeDisabled = true;
+    if (closed || window == null || window.address() == 0L) {
+      return;
+    }
+    if (Gtk4.gtkWindowIsMaximized(window)) {
+      Gtk4.gtkWindowUnmaximize(window);
+    }
   }
 
   @Override
@@ -338,10 +376,18 @@ public final class GtkWebView extends WebviewBase {
     LinuxHelper.startWindowDrag(this);
   }
 
+  /**
+   * @param path a {@code .png}, {@code .svg}, or {@code .xpm} file
+   * @throws IllegalArgumentException if the file has any other extension — GTK's icon theme has no
+   *     loader for it
+   * @see LinuxHelper#setIcon(Webview, Path)
+   */
   @Override
   public void setIcon(Path path) {
-    // GTK4 dropped file-based window icons; app icons are set via the .desktop file.
-    // gtk_window_set_icon_name() works with icon themes, not arbitrary paths.
+    // Validate before dispatching so a bad path throws on the caller's thread, not inside the
+    // GLib main loop where the exception would unwind through an upcall stub.
+    final var ext = LinuxHelper.iconExtension(path);
+    dispatchImpl(() -> LinuxHelper.setIcon(this, path, ext));
   }
 
   /**
@@ -382,6 +428,84 @@ public final class GtkWebView extends WebviewBase {
   public void onLoadChanged(MemorySegment wv, int loadEvent, MemorySegment data) {
     if (loadEvent == WebKit6.WEBKIT_LOAD_FINISHED) {
       showWindow(initialWidth, initialHeight);
+    }
+  }
+
+  /**
+   * {@code "notify::maximized"} handler on the GtkWindow. Undoes the maximize when the window was
+   * built with {@code maximizable(false)}. The {@code isMaximized} check makes this a no-op for the
+   * un-maximize we ourselves trigger, so the two states cannot ping-pong.
+   */
+  @SuppressWarnings("unused")
+  public void onMaximizedChanged(MemorySegment obj, MemorySegment pspec, MemorySegment data) {
+    if (!maximizeDisabled || windowDestroyed || window == null || window.address() == 0L) {
+      return;
+    }
+    if (Gtk4.gtkWindowIsMaximized(window)) {
+      Gtk4.gtkWindowUnmaximize(window);
+    }
+  }
+
+  /**
+   * {@code "notify::width"} / {@code "notify::height"} handler on the toplevel {@code GdkSurface}.
+   *
+   * <p>The clamp cannot run inline: the surface's size property is updated <em>before</em> GTK
+   * re-allocates the window widget, so {@code gtk_widget_get_width} still reports the previous size
+   * at this point. Deferring onto the idle queue lets the allocation catch up first, and the {@code
+   * clampQueued} latch collapses the width and height notifications of a single resize into one
+   * clamp.
+   *
+   * <p>The work goes through {@link #pendingDispatches} rather than {@link #dispatchImpl}: we are
+   * already on the GTK thread here, so {@code dispatchImpl} would run it inline and defeat the whole
+   * point. Queueing directly also reuses {@code dispatchStub} instead of keeping a second idle
+   * callback alive across window teardown.
+   */
+  @SuppressWarnings("unused")
+  public void onSurfaceSizeChanged(MemorySegment obj, MemorySegment pspec, MemorySegment data) {
+    if (closed || windowDestroyed || clampQueued) {
+      return;
+    }
+    if (maxWidth <= 0 && maxHeight <= 0) {
+      return;
+    }
+    clampQueued = true;
+    pendingDispatches.add(
+        () -> {
+          clampQueued = false;
+          applyMaxSizeClamp();
+        });
+    GLib.gIdleAddFull(dispatchStub, MemorySegment.NULL, MemorySegment.NULL);
+  }
+
+  /**
+   * Resizes the window down to {@link #maxWidth}/{@link #maxHeight} if it currently exceeds either.
+   * Must run on the GTK thread.
+   *
+   * <p>Skipped while maximized or fullscreen: those sizes are chosen by the window manager, and
+   * fighting them would either flicker or leave the window in a state the compositor immediately
+   * overrides. The constraint reapplies as soon as the window returns to its normal state.
+   */
+  private void applyMaxSizeClamp() {
+    if (window == null || window.address() == 0L || windowDestroyed) {
+      return;
+    }
+    final int mw = maxWidth;
+    final int mh = maxHeight;
+    if (mw <= 0 && mh <= 0) {
+      return;
+    }
+    if (Gtk4.gtkWindowIsMaximized(window) || Gtk4.gtkWindowIsFullscreen(window)) {
+      return;
+    }
+    final var w = Gtk4.gtkWidgetGetWidth(window);
+    final var h = Gtk4.gtkWidgetGetHeight(window);
+    if (w <= 0 || h <= 0) {
+      return; // not allocated yet
+    }
+    final var clampedW = mw > 0 ? Math.min(w, mw) : w;
+    final var clampedH = mh > 0 ? Math.min(h, mh) : h;
+    if (clampedW != w || clampedH != h) {
+      Gtk4.gtkWindowSetDefaultSize(window, clampedW, clampedH);
     }
   }
 
@@ -479,6 +603,28 @@ public final class GtkWebView extends WebviewBase {
                       void.class, MemorySegment.class, int.class, MemorySegment.class))
               .bindTo(this);
       loadChangedStub = linker.upcallStub(loadMh, WebKit6.LOAD_CHANGED_DESC, callbackArena);
+
+      // "notify::maximized": void(*)(GObject*, GParamSpec*, gpointer)
+      final var maximizedMh =
+          lookup
+              .findVirtual(
+                  GtkWebView.class,
+                  "onMaximizedChanged",
+                  MethodType.methodType(
+                      void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class))
+              .bindTo(this);
+      maximizedStub = linker.upcallStub(maximizedMh, Gtk4.NOTIFY_SIGNAL_DESC, callbackArena);
+
+      // "notify::width" / "notify::height" on the GdkSurface: same GObject notify shape
+      final var surfaceSizeMh =
+          lookup
+              .findVirtual(
+                  GtkWebView.class,
+                  "onSurfaceSizeChanged",
+                  MethodType.methodType(
+                      void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class))
+              .bindTo(this);
+      surfaceSizeStub = linker.upcallStub(surfaceSizeMh, Gtk4.NOTIFY_SIGNAL_DESC, callbackArena);
     } catch (NoSuchMethodException | IllegalAccessException e) {
       throw new RuntimeException("Failed to build upcall stubs", e);
     }
@@ -497,11 +643,19 @@ public final class GtkWebView extends WebviewBase {
       Gtk4.gtkMakeWindowTransparent(window);
     }
     GLib.gSignalConnect(window, "destroy", destroyStub, MemorySegment.NULL);
+    // Always connected; the handler is inert unless disableMaximizeImpl() has been called.
+    GLib.gSignalConnect(window, "notify::maximized", maximizedStub, MemorySegment.NULL);
     if (parentWindow.address() != 0L) {
       Gtk4.gtkWindowSetTransientFor(window, parentWindow);
-      if (moveParentWithChild) {
-        Gtk4.gtkWindowSetModal(window, true);
-      }
+      // Modal is set for every child window, not just moveParentWithChild ones. GTK4 has no
+      // window-positioning API, so this is the only way to get the centre-on-parent placement that
+      // CocoaWebView does explicitly via MacOSHelper.centerOnParent: window managers place a modal
+      // transient dialog centred on its parent, whereas a non-modal transient is only centred
+      // horizontally and sits near the parent's top edge.
+      //
+      // It is also the honest description of what this window already is — gtk_widget_set_sensitive
+      // below blocks the parent's input either way, which is what Builder.parent() documents.
+      Gtk4.gtkWindowSetModal(window, true);
       Gtk4.gtkWidgetSetSensitive(parentWindow, false);
     }
 
@@ -542,11 +696,32 @@ public final class GtkWebView extends WebviewBase {
     if (windowShown) {
       return;
     }
-    Gtk4.gtkWindowSetDefaultSize(window, width, height);
+    // Honour a max size set before the first show, so the window never appears oversized and then
+    // visibly snaps down on the first size notification.
+    final int mw = maxWidth;
+    final int mh = maxHeight;
+    Gtk4.gtkWindowSetDefaultSize(
+        window, mw > 0 ? Math.min(width, mw) : width, mh > 0 ? Math.min(height, mh) : height);
     Gtk4.gtkWindowSetChild(window, webView);
     Gtk4.gtkWidgetSetVisible(webView, true);
     Gtk4.gtkWidgetGrabFocus(webView);
     Gtk4.gtkWidgetSetVisible(window, true);
     windowShown = true;
+    connectSurfaceSizeSignals();
+  }
+
+  /**
+   * Connects the max-size watchdog to the toplevel {@code GdkSurface}, which only exists once the
+   * window has been realized — hence the call from {@link #showWindow} rather than from window
+   * construction or from {@link #setMaxSizeImpl}, either of which can run while the window is still
+   * unrealized and {@code gtk_native_get_surface} returns {@code NULL}.
+   */
+  private void connectSurfaceSizeSignals() {
+    final var surface = Gtk4.gtkNativeGetSurface(window);
+    if (surface.address() == 0L) {
+      return;
+    }
+    GLib.gSignalConnect(surface, "notify::width", surfaceSizeStub, MemorySegment.NULL);
+    GLib.gSignalConnect(surface, "notify::height", surfaceSizeStub, MemorySegment.NULL);
   }
 }

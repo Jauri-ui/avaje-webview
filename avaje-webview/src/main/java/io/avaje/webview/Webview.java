@@ -84,6 +84,11 @@ public interface Webview extends Closeable, Runnable {
   /**
    * Sets the maximum window dimensions.
    *
+   * <p>On Linux (GTK4) there is no geometry-hint API to hand the limit to the window manager, so it
+   * is enforced after the fact: a window that exceeds the maximum is resized back down, which the
+   * user sees as a snap-back rather than a resize that refuses to go further. The limit is not
+   * applied while the window is maximized or fullscreen.
+   *
    * @param width the maximum width in pixels
    * @param height the maximum height in pixels
    */
@@ -226,9 +231,15 @@ public interface Webview extends Closeable, Runnable {
   void startWindowDrag();
 
   /**
-   * Sets the icon for the webview window
+   * Sets the icon for the webview window.
+   *
+   * <p>The accepted format is platform-specific: Windows requires a {@code .ico}; Linux requires a
+   * {@code .png}, {@code .svg}, or {@code .xpm}, the formats GTK's icon theme can load. macOS
+   * accepts anything {@code NSImage} can read.
    *
    * @param path to the icon file
+   * @throws IllegalArgumentException on Linux, and {@link IllegalStateException} on Windows, if the
+   *     file is not in a format that platform can load
    */
   void setIcon(Path path);
 
@@ -357,6 +368,10 @@ public interface Webview extends Closeable, Runnable {
      * <p>When {@code moveParentWithChild} is {@code true}, dragging the child window also moves the
      * parent by the same delta, keeping them visually locked.
      *
+     * <p>On Linux (GTK4) this flag has no effect: there is no window-positioning API to read the
+     * child's position from or to apply a delta to the parent with. The child is always created as a
+     * modal transient of its parent, which leaves placement and stacking to the window manager.
+     *
      * @param parent the {@code Webview} that should be blocked while this window is open
      * @param moveParentWithChild {@code true} to synchronise parent position with child
      * @return this builder
@@ -384,7 +399,9 @@ public interface Webview extends Closeable, Runnable {
      * Controls whether the maximize button is shown on the native title bar. Defaults to {@code
      * true}.
      *
-     * <p>On Linux (GTK4) this has no effect.
+     * <p>On Linux (GTK4) the button cannot be removed from a window-manager-drawn title bar, so
+     * maximize is vetoed instead: the window un-maximizes immediately whenever it becomes maximized,
+     * whether from the button, a title-bar double-click, or a keyboard shortcut.
      *
      * @param maximizable {@code false} to hide/disable the maximize button
      * @return this builder

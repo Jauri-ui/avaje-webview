@@ -79,12 +79,16 @@ Webview webview = Webview.builder()
     .height(800)
     .enableDeveloperTools(true) // Enable right-click > Inspect
     .resizable(false)           // Lock to width/height, no user resize
-    .maximizable(false)         // Hide/disable the maximize button (ignored on Linux)
+    .maximizable(false)         // Hide/disable the maximize button
     .maximize(true)             // Start maximized (ignored if fullscreen(true))
     .fullscreen(true)           // Start fullscreen, takes precedence over maximize
     .minSize(600, 400)          // Minimum size the user can resize to
     .maxSize(1920, 1080)        // Maximum size the user can resize to
     .build();
+
+// Linux notes: GTK4 has neither geometry hints nor a way to remove the maximize button from a
+// window-manager-drawn title bar, so both constraints are enforced reactively — the window snaps
+// back after exceeding the maximum size, and un-maximizes immediately when maximized.
 
 // Set window constraints after creation
 webview.setMinSize(600, 400);
@@ -150,7 +154,9 @@ Webview child = Webview.builder()
 ```
 
 The parent window is disabled (blocked from mouse/keyboard input) as soon as the child is built,
-and re-enabled automatically when the child closes.
+and re-enabled automatically when the child closes. The child is centred on its parent: macOS
+positions it explicitly, and on Linux it is created as a modal transient so the window manager
+places it — GTK4 has no window-positioning API for the client to do it itself.
 
 Pass `true` as a second argument to `parent(...)` to keep the parent locked to the child's
 position while dragging (Windows and macOS only currently):
@@ -171,8 +177,15 @@ webview.setIcon(Path.of("icon.ico"));
 webview.setIcon(getClass().getResource("/icon.ico").toURI());
 ```
 
-> **Note:** GTK4 dropped support for arbitrary file-based window icons. On Linux, the app icon
-> is set via the `.desktop` file and icon theme. `setIcon` is a no-op on Linux.
+> **Note:** the accepted file format is platform-specific. Windows requires a `.ico`; Linux requires
+> a `.png`, `.svg`, or `.xpm` (the formats GTK's icon theme can load) — anything else throws.
+>
+> **Linux:** GTK4 dropped file-based window icons, leaving only `gtk_window_set_icon_name`, so the
+> file is staged into a private directory registered on the display's icon-theme search path and
+> then referenced by name. This reaches the window manager as `_NET_WM_ICON` on X11. On Wayland it
+> travels over the `xdg-toplevel-icon` protocol, which GTK only speaks from 4.20 onwards — on older
+> GTK the compositor falls back to the icon from the application's `.desktop` file and the call has
+> no visible effect.
 
 ## Java-JavaScript Bridge
 

@@ -29,6 +29,16 @@ final class Gtk4 {
    */
   static final FunctionDescriptor DESTROY_SIGNAL_DESC = FunctionDescriptor.ofVoid(ADDRESS, ADDRESS);
 
+  /**
+   * {@code FunctionDescriptor} for the GObject {@code "notify"} signal. {@code void(*)(GObject*
+   * object, GParamSpec* pspec, gpointer user_data)}.
+   *
+   * <p>Used with a detail suffix ({@code "notify::maximized"}, {@code "notify::width"}) so the
+   * handler only fires for the single property we care about.
+   */
+  static final FunctionDescriptor NOTIFY_SIGNAL_DESC =
+      FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS);
+
   private static final Linker LINKER = Linker.nativeLinker();
 
   /** Symbol lookup rooted in {@code libgtk-4.so.1} */
@@ -156,6 +166,82 @@ final class Gtk4 {
    */
   private static final MethodHandle GTK_WINDOW_FULLSCREEN =
       downcall("gtk_window_fullscreen", FunctionDescriptor.ofVoid(ADDRESS));
+
+  /**
+   * {@code gtk_window_unmaximize(GtkWindow* window) -> void}
+   *
+   * <p>Asks the window manager to leave the maximized state and restore the previous size. Used to
+   * veto maximize requests when the window was built with {@code maximizable(false)}: GTK4 has no
+   * way to remove the maximize button from a window-manager-drawn title bar, so the closest
+   * equivalent to Cocoa's {@code windowShouldZoom: NO} is to immediately undo the maximize.
+   */
+  private static final MethodHandle GTK_WINDOW_UNMAXIMIZE =
+      downcall("gtk_window_unmaximize", FunctionDescriptor.ofVoid(ADDRESS));
+
+  /**
+   * {@code gtk_window_is_maximized(GtkWindow* window) -> gboolean}
+   *
+   * <p>Reports whether the window is currently maximized. Read inside the {@code
+   * "notify::maximized"} handler to distinguish a maximize from the un-maximize that our own veto
+   * triggers (which would otherwise recurse).
+   */
+  private static final MethodHandle GTK_WINDOW_IS_MAXIMIZED =
+      downcall("gtk_window_is_maximized", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /**
+   * {@code gtk_window_is_fullscreen(GtkWindow* window) -> gboolean}
+   *
+   * <p>Reports whether the window is currently fullscreen. Used to skip max-size clamping while
+   * maximized/fullscreen, where the size is the window manager's to decide.
+   */
+  private static final MethodHandle GTK_WINDOW_IS_FULLSCREEN =
+      downcall("gtk_window_is_fullscreen", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /**
+   * {@code gtk_widget_get_width(GtkWidget* widget) -> int}
+   *
+   * <p>Returns the widget's current allocated width. For a top-level {@code GtkWindow} this is the
+   * size in the same coordinate space that {@link #GTK_WINDOW_SET_DEFAULT_SIZE} takes — it excludes
+   * the client-side-decoration shadow margin that {@code gdk_surface_get_width} includes, so it is
+   * the only size we can compare against a user-supplied maximum without an offset error.
+   */
+  private static final MethodHandle GTK_WIDGET_GET_WIDTH =
+      downcall("gtk_widget_get_width", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /** {@code gtk_widget_get_height(GtkWidget* widget) -> int}. See {@link #GTK_WIDGET_GET_WIDTH}. */
+  private static final MethodHandle GTK_WIDGET_GET_HEIGHT =
+      downcall("gtk_widget_get_height", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /**
+   * {@code gtk_window_set_icon_name(GtkWindow* window, const char* name) -> void}
+   *
+   * <p>GTK4 removed every file- and pixbuf-based window icon setter ({@code gtk_window_set_icon},
+   * {@code set_icon_list}, {@code set_icon_from_file}); an icon <em>name</em> resolved through the
+   * icon theme is all that remains. {@link #gtkRegisterIconSearchPath} makes an arbitrary file on
+   * disk addressable by name so {@code setIcon(Path)} can still be honored.
+   */
+  private static final MethodHandle GTK_WINDOW_SET_ICON_NAME =
+      downcall("gtk_window_set_icon_name", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
+
+  /**
+   * {@code gtk_icon_theme_get_for_display(GdkDisplay* display) -> GtkIconTheme*}
+   *
+   * <p>Returns the icon theme object for {@code display}. This is a <em>borrowed</em> reference
+   * owned by the display — do not unref it.
+   */
+  private static final MethodHandle GTK_ICON_THEME_GET_FOR_DISPLAY =
+      downcall("gtk_icon_theme_get_for_display", FunctionDescriptor.of(ADDRESS, ADDRESS));
+
+  /**
+   * {@code gtk_icon_theme_add_search_path(GtkIconTheme* self, const char* path) -> void}
+   *
+   * <p>Appends a directory to the theme's search path. Besides full {@code
+   * <theme>/<size>/<context>/} theme trees, GTK also scans each search-path directory for
+   * "unthemed" icons — plain {@code <name>.png} / {@code .svg} / {@code .xpm} files sitting directly
+   * in it — which is what lets us expose a single caller-supplied file under a generated name.
+   */
+  private static final MethodHandle GTK_ICON_THEME_ADD_SEARCH_PATH =
+      downcall("gtk_icon_theme_add_search_path", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
 
   /**
    * {@code gtk_window_set_decorated(GtkWindow* window, gboolean setting) -> void}
@@ -525,6 +611,124 @@ final class Gtk4 {
   static void gtkWindowFullscreen(MemorySegment window) {
     try {
       GTK_WINDOW_FULLSCREEN.invokeExact(window);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Asks the window manager to leave the maximized state, restoring the pre-maximize size.
+   *
+   * @param window a {@code GtkWindow*}
+   */
+  static void gtkWindowUnmaximize(MemorySegment window) {
+    try {
+      GTK_WINDOW_UNMAXIMIZE.invokeExact(window);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * @param window a {@code GtkWindow*}
+   * @return {@code true} if the window is currently maximized
+   */
+  static boolean gtkWindowIsMaximized(MemorySegment window) {
+    try {
+      return (int) GTK_WINDOW_IS_MAXIMIZED.invokeExact(window) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * @param window a {@code GtkWindow*}
+   * @return {@code true} if the window is currently fullscreen
+   */
+  static boolean gtkWindowIsFullscreen(MemorySegment window) {
+    try {
+      return (int) GTK_WINDOW_IS_FULLSCREEN.invokeExact(window) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Returns the widget's currently allocated width, in the same units {@link
+   * #gtkWindowSetDefaultSize} takes.
+   *
+   * @param widget a {@code GtkWidget*}
+   * @return the allocated width in device pixels, or {@code 0} before the first allocation
+   */
+  static int gtkWidgetGetWidth(MemorySegment widget) {
+    try {
+      return (int) GTK_WIDGET_GET_WIDTH.invokeExact(widget);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Returns the widget's currently allocated height.
+   *
+   * @param widget a {@code GtkWidget*}
+   * @return the allocated height in device pixels, or {@code 0} before the first allocation
+   */
+  static int gtkWidgetGetHeight(MemorySegment widget) {
+    try {
+      return (int) GTK_WIDGET_GET_HEIGHT.invokeExact(widget);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Returns the {@code GdkSurface} backing a realized top-level window, or a {@code NULL} segment if
+   * the window has not been realized yet.
+   *
+   * @param window a {@code GtkWindow*}
+   * @return a borrowed {@code GdkSurface*}; do not unref
+   */
+  static MemorySegment gtkNativeGetSurface(MemorySegment window) {
+    try {
+      return (MemorySegment) GTK_NATIVE_GET_SURFACE.invokeExact(window);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Sets the window's icon by icon-theme name.
+   *
+   * @param window a {@code GtkWindow*}
+   * @param name an icon name resolvable through the display's {@code GtkIconTheme}
+   */
+  static void gtkWindowSetIconName(MemorySegment window, String name) {
+    try (var a = Arena.ofConfined()) {
+      GTK_WINDOW_SET_ICON_NAME.invokeExact(window, a.allocateFrom(name));
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Adds {@code dir} to the default display's icon theme search path so files placed directly in it
+   * become resolvable as icon names.
+   *
+   * @param dir an absolute directory path containing {@code <name>.png} / {@code .svg} / {@code
+   *     .xpm} files
+   */
+  static void gtkRegisterIconSearchPath(String dir) {
+    try (var a = Arena.ofConfined()) {
+      final var display = (MemorySegment) GDK_DISPLAY_GET_DEFAULT.invokeExact();
+      if (display.address() == 0L) {
+        return;
+      }
+      final var theme = (MemorySegment) GTK_ICON_THEME_GET_FOR_DISPLAY.invokeExact(display);
+      if (theme.address() == 0L) {
+        return;
+      }
+      GTK_ICON_THEME_ADD_SEARCH_PATH.invokeExact(theme, a.allocateFrom(dir));
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
