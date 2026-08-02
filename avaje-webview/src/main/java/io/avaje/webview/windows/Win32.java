@@ -63,6 +63,7 @@ final class Win32 {
   static final int SW_SHOW = 5;
   static final int SW_MAXIMIZE = 3;
   static final int SW_MINIMIZE = 6;
+  static final int SW_RESTORE = 9;
   static final int WM_DESTROY = 0x0002;
   static final int WM_CLOSE = 0x0010;
   static final int WM_SIZE = 0x0005;
@@ -80,6 +81,9 @@ final class Win32 {
   static final int SWP_NOZORDER = 0x0004;
   static final int SWP_NOACTIVATE = 0x0010;
   static final int SWP_FRAMECHANGED = 0x0020;
+  // Sentinel HWND values for SetWindowPos's hWndInsertAfter param.
+  static final long HWND_TOPMOST = -1L;
+  static final long HWND_NOTOPMOST = -2L;
   static final int WS_EX_NOREDIRECTBITMAP = 0x00200000;
   static final int WM_DPICHANGED = 0x02E0;
   static final int SM_CXSCREEN = 0;
@@ -273,6 +277,25 @@ final class Win32 {
    */
   static final MethodHandle SetForegroundWindow =
       downcall(USER32, "SetForegroundWindow", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /** {@code IsZoomed(hWnd) -> BOOL}. Returns non-zero if the window is currently maximized. */
+  static final MethodHandle IsZoomed =
+      downcall(USER32, "IsZoomed", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /** {@code IsIconic(hWnd) -> BOOL}. Returns non-zero if the window is currently minimized. */
+  static final MethodHandle IsIconic =
+      downcall(USER32, "IsIconic", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /**
+   * {@code IsWindowVisible(hWnd) -> BOOL}. Returns non-zero if the window has the {@code WS_VISIBLE}
+   * style bit set. Minimised windows still report as visible.
+   */
+  static final MethodHandle IsWindowVisible =
+      downcall(USER32, "IsWindowVisible", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /** {@code GetForegroundWindow() -> HWND}. Returns the current foreground window handle. */
+  static final MethodHandle GetForegroundWindow =
+      downcall(USER32, "GetForegroundWindow", FunctionDescriptor.of(ADDRESS));
 
   /**
    * {@code GetClientRect(hWnd, lpRect) -> BOOL}
@@ -574,11 +597,179 @@ final class Win32 {
     }
   }
 
+  /**
+   * Toggles the topmost Z-order bit on {@code hwnd}. Passes {@link #HWND_TOPMOST}/{@link
+   * #HWND_NOTOPMOST} as {@code hWndInsertAfter} to {@link #SetWindowPos} with {@code
+   * SWP_NOMOVE|SWP_NOSIZE} so the window keeps its current geometry.
+   */
+  static void setAlwaysOnTop(MemorySegment hwnd, boolean onTop) {
+    try {
+      final var insertAfter = MemorySegment.ofAddress(onTop ? HWND_TOPMOST : HWND_NOTOPMOST);
+      final var _ =
+          (int)
+              SetWindowPos.invokeExact(
+                  hwnd, insertAfter, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Flips the {@link #WS_THICKFRAME} bit on {@code hwnd}'s style, plus {@link #WS_MAXIMIZEBOX}
+   * because Windows disables the Maximize button once the sizing frame is gone. Sends {@link
+   * #SWP_FRAMECHANGED} so the non-client area repaints immediately.
+   */
+  static void setResizable(MemorySegment hwnd, boolean resizable) {
+    try {
+      var style = (int) GetWindowLong.invokeExact(hwnd, GWL_STYLE);
+      if (resizable) {
+        style |= WS_THICKFRAME | WS_MAXIMIZEBOX;
+      } else {
+        style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+      }
+      final var _ = (int) SetWindowLong.invokeExact(hwnd, GWL_STYLE, style);
+      final var _ =
+          (int)
+              SetWindowPos.invokeExact(
+                  hwnd,
+                  MemorySegment.NULL,
+                  0,
+                  0,
+                  0,
+                  0,
+                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Flips {@link #WS_CAPTION} and {@link #WS_THICKFRAME} to show or hide native decorations. When
+   * removing decorations we also strip the frame; when re-adding we restore the full {@link
+   * #WS_OVERLAPPEDWINDOW} set so the sizing frame and system menu return with the title bar.
+   */
+  static void setDecorations(MemorySegment hwnd, boolean decorated) {
+    try {
+      var style = (int) GetWindowLong.invokeExact(hwnd, GWL_STYLE);
+      if (decorated) {
+        style |= WS_OVERLAPPEDWINDOW;
+      } else {
+        style &= ~(WS_CAPTION | WS_THICKFRAME);
+      }
+      final var _ = (int) SetWindowLong.invokeExact(hwnd, GWL_STYLE, style);
+      final var _ =
+          (int)
+              SetWindowPos.invokeExact(
+                  hwnd,
+                  MemorySegment.NULL,
+                  0,
+                  0,
+                  0,
+                  0,
+                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** {@code IsZoomed(hwnd) != 0}. True when the window is currently maximized. */
+  static boolean isMaximized(MemorySegment hwnd) {
+    try {
+      return ((int) IsZoomed.invokeExact(hwnd)) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** {@code IsIconic(hwnd) != 0}. True when the window is currently minimized. */
+  static boolean isMinimized(MemorySegment hwnd) {
+    try {
+      return ((int) IsIconic.invokeExact(hwnd)) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** {@code IsWindowVisible(hwnd) != 0}. True when the window has the {@code WS_VISIBLE} bit. */
+  static boolean isVisible(MemorySegment hwnd) {
+    try {
+      return ((int) IsWindowVisible.invokeExact(hwnd)) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** {@code GetForegroundWindow() == hwnd}. True when {@code hwnd} owns the foreground focus. */
+  static boolean isFocused(MemorySegment hwnd) {
+    try {
+      final var fg = (MemorySegment) GetForegroundWindow.invokeExact();
+      return fg.address() == hwnd.address();
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** Tests whether {@code hwnd}'s current style contains {@link #WS_CAPTION}. */
+  static boolean isDecorated(MemorySegment hwnd) {
+    try {
+      final var style = (int) GetWindowLong.invokeExact(hwnd, GWL_STYLE);
+      return (style & WS_CAPTION) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** Tests whether {@code hwnd}'s current style contains {@link #WS_THICKFRAME}. */
+  static boolean isResizable(MemorySegment hwnd) {
+    try {
+      final var style = (int) GetWindowLong.invokeExact(hwnd, GWL_STYLE);
+      return (style & WS_THICKFRAME) != 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
   /** Sets the title bar text of {@code hwnd} to {@code title} (UTF-16LE encoded). */
   static void setWindowText(MemorySegment hwnd, String title) {
     try (var a = Arena.ofConfined()) {
       final var _ =
           (int) SetWindowTextW.invokeExact(hwnd, a.allocateFrom(title, StandardCharsets.UTF_16LE));
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Moves {@code hwnd} so its top-left corner sits at logical screen coordinates ({@code x},
+   * {@code y}), measured from the top-left of the primary monitor. Preserves the window's current
+   * size and Z-order.
+   */
+  static void setPosition(MemorySegment hwnd, int x, int y) {
+    try {
+      final var _ =
+          (int)
+              SetWindowPos.invokeExact(
+                  hwnd, MemorySegment.NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Reads {@code GetWindowRect(hwnd)} and returns the outer top-left in logical (DPI-unscaled)
+   * pixels. {@code GetWindowRect} returns physical pixels, so we divide by the window's current
+   * DPI scale relative to the 96-DPI baseline. Return array is {@code {x, y}}.
+   */
+  static int[] getPosition(MemorySegment hwnd) {
+    try (var a = Arena.ofConfined()) {
+      final var rect = a.allocate(RECT_LAYOUT);
+      final var _ = (int) GetWindowRect.invokeExact(hwnd, rect);
+      final int physX = rect.get(JAVA_INT, 0);
+      final int physY = rect.get(JAVA_INT, 4);
+      final int dpi = (int) GetDpiForWindow.invokeExact(hwnd);
+      final int logX = physX * DEFAULT_DPI / dpi;
+      final int logY = physY * DEFAULT_DPI / dpi;
+      return new int[] {logX, logY};
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }

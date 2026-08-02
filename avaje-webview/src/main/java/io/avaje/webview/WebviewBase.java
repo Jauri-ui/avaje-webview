@@ -262,10 +262,91 @@ public abstract sealed class WebviewBase implements Webview
   public abstract Webview maximizeWindow();
 
   @Override
+  public abstract Webview unmaximizeWindow();
+
+  @Override
   public abstract Webview fullscreen();
 
   @Override
+  public abstract Webview setFullscreen(boolean on);
+
+  @Override
   public abstract Webview minimizeWindow();
+
+  @Override
+  public abstract Webview unminimizeWindow();
+
+  @Override
+  public Webview setPosition(int x, int y) {
+    dispatchImpl(() -> setPositionImpl(x, y));
+    return this;
+  }
+
+  @Override
+  public Webview center() {
+    dispatchImpl(this::centerImpl);
+    return this;
+  }
+
+  @Override
+  public abstract int[] getPosition();
+
+  @Override
+  public Webview show() {
+    dispatchImpl(this::showImpl);
+    return this;
+  }
+
+  @Override
+  public Webview hide() {
+    dispatchImpl(this::hideImpl);
+    return this;
+  }
+
+  @Override
+  public Webview setFocus() {
+    dispatchImpl(this::setFocusImpl);
+    return this;
+  }
+
+  @Override
+  public Webview setAlwaysOnTop(boolean onTop) {
+    dispatchImpl(() -> setAlwaysOnTopImpl(onTop));
+    return this;
+  }
+
+  @Override
+  public Webview setResizable(boolean resizable) {
+    dispatchImpl(() -> setResizableImpl(resizable));
+    return this;
+  }
+
+  @Override
+  public Webview setDecorations(boolean decorated) {
+    dispatchImpl(() -> setDecorationsImpl(decorated));
+    return this;
+  }
+
+  @Override
+  public abstract boolean isMaximized();
+
+  @Override
+  public abstract boolean isMinimized();
+
+  @Override
+  public abstract boolean isFullscreen();
+
+  @Override
+  public abstract boolean isVisible();
+
+  @Override
+  public abstract boolean isFocused();
+
+  @Override
+  public abstract boolean isDecorated();
+
+  @Override
+  public abstract boolean isResizable();
 
   @Override
   public void startWindowDrag() {
@@ -325,6 +406,22 @@ public abstract sealed class WebviewBase implements Webview
   protected abstract void setHtmlImpl(String html);
 
   protected abstract void startWindowDragImpl();
+
+  protected abstract void setPositionImpl(int x, int y);
+
+  protected abstract void centerImpl();
+
+  protected abstract void showImpl();
+
+  protected abstract void hideImpl();
+
+  protected abstract void setFocusImpl();
+
+  protected abstract void setAlwaysOnTopImpl(boolean onTop);
+
+  protected abstract void setResizableImpl(boolean resizable);
+
+  protected abstract void setDecorationsImpl(boolean decorated);
 
   protected abstract void evalImpl(String js);
 

@@ -201,6 +201,14 @@ public interface Webview extends Closeable, Runnable {
   Webview maximizeWindow();
 
   /**
+   * Restores a previously maximized window to its prior size. No-op if the window is not currently
+   * maximized.
+   *
+   * @return this Webview instance for chaining
+   */
+  Webview unmaximizeWindow();
+
+  /**
    * Switches the webview window to fullscreen mode.
    *
    * @return this Webview instance for chaining
@@ -208,11 +216,26 @@ public interface Webview extends Closeable, Runnable {
   Webview fullscreen();
 
   /**
+   * Enters or exits fullscreen mode. Idempotent: passing the current fullscreen state is a no-op.
+   *
+   * @param on {@code true} to enter fullscreen, {@code false} to exit
+   * @return this Webview instance for chaining
+   */
+  Webview setFullscreen(boolean on);
+
+  /**
    * Minimizes the webview window to the taskbar/dock.
    *
    * @return this Webview instance for chaining
    */
   Webview minimizeWindow();
+
+  /**
+   * Restores a previously minimized window. No-op if the window is not currently minimized.
+   *
+   * @return this Webview instance for chaining
+   */
+  Webview unminimizeWindow();
 
   /**
    * Begins a native window-move operation, as if the user had grabbed the title bar and started
@@ -229,6 +252,145 @@ public interface Webview extends Closeable, Runnable {
    * }</pre>
    */
   void startWindowDrag();
+
+  /**
+   * Moves the window so that its top-left corner sits at logical screen coordinates ({@code x},
+   * {@code y}), measured from the top-left of the primary screen.
+   *
+   * <p>On GTK4 (Linux/Wayland) programmatic window positioning is not supported by the window
+   * manager and this call is a no-op.
+   *
+   * @param x new left edge in pixels
+   * @param y new top edge in pixels
+   * @return this Webview instance for chaining
+   */
+  Webview setPosition(int x, int y);
+
+  /**
+   * Centers the window on the screen it currently occupies.
+   *
+   * <p>On GTK4 this defers to the window manager and may be a no-op.
+   *
+   * @return this Webview instance for chaining
+   */
+  Webview center();
+
+  /**
+   * Returns the window's current top-left position on the primary screen, in logical pixels. The
+   * returned array is {@code {x, y}}. Must be called from the webview's UI thread; typical usage
+   * is inside a {@link #bind(String, WebviewBinding) bind} callback, which is already dispatched
+   * on the UI thread.
+   *
+   * <p>On GTK4 this may return {@code {0, 0}} because Wayland does not expose absolute window
+   * coordinates to clients.
+   *
+   * @return a fresh {@code int[2]} of the current logical top-left {@code {x, y}}
+   */
+  int[] getPosition();
+
+  /**
+   * Makes the window visible if it was previously hidden. No-op if the window is already visible.
+   *
+   * @return this Webview instance for chaining
+   */
+  Webview show();
+
+  /**
+   * Hides the window without destroying it. The window can later be restored with {@link #show()}
+   * or {@link #setFocus()}.
+   *
+   * @return this Webview instance for chaining
+   */
+  Webview hide();
+
+  /**
+   * Brings the window to the front, makes it the key/active window, and gives it keyboard focus.
+   *
+   * @return this Webview instance for chaining
+   */
+  Webview setFocus();
+
+  /**
+   * Requests the window to stay above (or return to normal stacking with) all other windows.
+   *
+   * <p>On GTK4 this maps to {@code gtk_window_set_keep_above}, which is deprecated in GTK4 and may
+   * be ignored by some Wayland compositors.
+   *
+   * @param onTop {@code true} to always keep the window above others; {@code false} to restore
+   *     normal stacking
+   * @return this Webview instance for chaining
+   */
+  Webview setAlwaysOnTop(boolean onTop);
+
+  /**
+   * Enables or disables user resizing of the window.
+   *
+   * @param resizable {@code true} to allow the user to drag window edges to resize
+   * @return this Webview instance for chaining
+   */
+  Webview setResizable(boolean resizable);
+
+  /**
+   * Shows or hides native window decorations (title bar, borders, minimize/maximize/close
+   * buttons).
+   *
+   * @param decorated {@code true} to show decorations; {@code false} to remove them
+   * @return this Webview instance for chaining
+   */
+  Webview setDecorations(boolean decorated);
+
+  /**
+   * Returns whether the window is currently maximized (zoomed to fill the screen but not
+   * fullscreen). Must be called from the webview's UI thread.
+   *
+   * @return {@code true} if maximized
+   */
+  boolean isMaximized();
+
+  /**
+   * Returns whether the window is currently minimized/iconified. Must be called from the webview's
+   * UI thread.
+   *
+   * @return {@code true} if minimized
+   */
+  boolean isMinimized();
+
+  /**
+   * Returns whether the window is currently in fullscreen mode. Must be called from the webview's
+   * UI thread.
+   *
+   * @return {@code true} if fullscreen
+   */
+  boolean isFullscreen();
+
+  /**
+   * Returns whether the window is visible on screen (not hidden). A minimized window is still
+   * considered visible.
+   *
+   * @return {@code true} if visible
+   */
+  boolean isVisible();
+
+  /**
+   * Returns whether the window currently has keyboard focus.
+   *
+   * @return {@code true} if focused
+   */
+  boolean isFocused();
+
+  /**
+   * Returns whether the window currently shows native decorations (title bar, borders).
+   *
+   * @return {@code true} if decorated
+   */
+  boolean isDecorated();
+
+  /**
+   * Returns whether the user is allowed to resize the window by dragging its edges.
+   *
+   * @return {@code true} if resizable
+   */
+  boolean isResizable();
 
   /**
    * Sets the icon for the webview window.

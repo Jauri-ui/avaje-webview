@@ -360,14 +360,32 @@ public final class GtkWebView extends WebviewBase {
   }
 
   @Override
+  public Webview unmaximizeWindow() {
+    dispatchImpl(() -> LinuxHelper.unmaximizeWindow(this));
+    return this;
+  }
+
+  @Override
   public Webview fullscreen() {
     dispatchImpl(() -> LinuxHelper.fullscreen(this));
     return this;
   }
 
   @Override
+  public Webview setFullscreen(boolean on) {
+    dispatchImpl(() -> LinuxHelper.setFullscreen(this, on));
+    return this;
+  }
+
+  @Override
   public Webview minimizeWindow() {
     dispatchImpl(() -> LinuxHelper.minimizeWindow(this));
+    return this;
+  }
+
+  @Override
+  public Webview unminimizeWindow() {
+    dispatchImpl(() -> LinuxHelper.unminimizeWindow(this));
     return this;
   }
 
@@ -382,6 +400,106 @@ public final class GtkWebView extends WebviewBase {
    *     loader for it
    * @see LinuxHelper#setIcon(Webview, Path)
    */
+  @Override
+  protected void setPositionImpl(int x, int y) {
+    // GTK4 removed gtk_window_move(); on Wayland positioning is compositor-controlled and
+    // programmatic window placement is intentionally not exposed. No-op.
+  }
+
+  @Override
+  protected void centerImpl() {
+    // GTK4 has no gtk_window_center() equivalent; the compositor decides window placement.
+    // No-op.
+  }
+
+  @Override
+  public int[] getPosition() {
+    // GTK4 / Wayland does not expose absolute window position to clients; X11 does but the
+    // returned coordinates are unreliable under modern compositors. Report {0, 0} so callers
+    // get a well-defined value.
+    return new int[] {0, 0};
+  }
+
+  @Override
+  protected void showImpl() {
+    if (windowDestroyed || window == null || window.address() == 0L) return;
+    Gtk4.gtkWidgetSetVisible(window, true);
+  }
+
+  @Override
+  protected void hideImpl() {
+    if (windowDestroyed || window == null || window.address() == 0L) return;
+    Gtk4.gtkWidgetSetVisible(window, false);
+  }
+
+  @Override
+  protected void setFocusImpl() {
+    if (windowDestroyed || window == null || window.address() == 0L) return;
+    Gtk4.gtkWindowPresent(window);
+  }
+
+  @Override
+  protected void setAlwaysOnTopImpl(boolean onTop) {
+    if (windowDestroyed || window == null || window.address() == 0L) return;
+    // Deprecated in GTK4 and typically ignored on Wayland; still useful under X11.
+    Gtk4.gtkWindowSetKeepAbove(window, onTop);
+  }
+
+  @Override
+  protected void setResizableImpl(boolean resizable) {
+    if (windowDestroyed || window == null || window.address() == 0L) return;
+    Gtk4.gtkWindowSetResizable(window, resizable);
+  }
+
+  @Override
+  protected void setDecorationsImpl(boolean decorated) {
+    if (windowDestroyed || window == null || window.address() == 0L) return;
+    Gtk4.gtkWindowSetDecorated(window, decorated);
+  }
+
+  @Override
+  public boolean isMaximized() {
+    if (windowDestroyed || window == null || window.address() == 0L) return false;
+    return Gtk4.gtkWindowIsMaximized(window);
+  }
+
+  @Override
+  public boolean isMinimized() {
+    // GTK4 exposes no is_minimized/is_iconified getter; the state is compositor-owned. Return
+    // false so callers get a well-defined value instead of throwing.
+    return false;
+  }
+
+  @Override
+  public boolean isFullscreen() {
+    if (windowDestroyed || window == null || window.address() == 0L) return false;
+    return Gtk4.gtkWindowIsFullscreen(window);
+  }
+
+  @Override
+  public boolean isVisible() {
+    if (windowDestroyed || window == null || window.address() == 0L) return false;
+    return Gtk4.gtkWidgetGetVisible(window);
+  }
+
+  @Override
+  public boolean isFocused() {
+    if (windowDestroyed || window == null || window.address() == 0L) return false;
+    return Gtk4.gtkWindowIsActive(window);
+  }
+
+  @Override
+  public boolean isDecorated() {
+    if (windowDestroyed || window == null || window.address() == 0L) return false;
+    return Gtk4.gtkWindowGetDecorated(window);
+  }
+
+  @Override
+  public boolean isResizable() {
+    if (windowDestroyed || window == null || window.address() == 0L) return false;
+    return Gtk4.gtkWindowGetResizable(window);
+  }
+
   @Override
   public void setIcon(Path path) {
     // Validate before dispatching so a bad path throws on the caller's thread, not inside the
