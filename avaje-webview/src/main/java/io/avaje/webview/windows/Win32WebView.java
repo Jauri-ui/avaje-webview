@@ -141,6 +141,15 @@ public final class Win32WebView extends WebviewBase {
   private int currentDpi = Win32.DEFAULT_DPI;
 
   /**
+   * Fullscreen state kept so {@link #setFullscreen}{@code (false)} can restore the exact
+   * pre-fullscreen window style and rect. Populated by {@link #enterFullscreen} the first time we
+   * transition into fullscreen and cleared by {@link #exitFullscreen} on the way out.
+   */
+  private boolean isFullscreen;
+  private int savedStyle;
+  private int savedX, savedY, savedW, savedH;
+
+  /**
    * Cross-thread dispatch queue. Tasks added by any thread are drained on the UI thread inside
    * {@code msgWndProc} when a {@link Win32#WM_APP} message is received (except during nested pump
    * depth &gt; 0).
@@ -405,9 +414,77 @@ public final class Win32WebView extends WebviewBase {
   }
 
   @Override
-  public Webview fullscreen() {
-    dispatchImpl(() -> Win32.fullscreen(hwnd));
+  public Webview unmaximizeWindow() {
+    dispatchImpl(() -> Win32.showWindow(hwnd, Win32.SW_RESTORE));
     return this;
+  }
+
+  @Override
+  public Webview fullscreen() {
+    dispatchImpl(this::enterFullscreen);
+    return this;
+  }
+
+  @Override
+  public Webview setFullscreen(boolean on) {
+    dispatchImpl(() -> {
+      if (on) {
+        enterFullscreen();
+      } else {
+        exitFullscreen();
+      }
+    });
+    return this;
+  }
+
+  /**
+   * Saves the current style and window rect, strips {@link Win32#WS_OVERLAPPEDWINDOW}, and
+   * sizes the window to the primary monitor bounds. No-op if already fullscreen.
+   */
+  private void enterFullscreen() {
+    if (isFullscreen) {
+      return;
+    }
+    try (var a = Arena.ofConfined()) {
+      final var rect = a.allocate(Win32.RECT_LAYOUT);
+      final var _ = (int) Win32.GetWindowRect.invokeExact(hwnd, rect);
+      savedX = rect.get(JAVA_INT, 0);
+      savedY = rect.get(JAVA_INT, 4);
+      savedW = rect.get(JAVA_INT, 8) - savedX;
+      savedH = rect.get(JAVA_INT, 12) - savedY;
+      savedStyle = (int) Win32.GetWindowLong.invokeExact(hwnd, Win32.GWL_STYLE);
+      Win32.fullscreen(hwnd);
+      isFullscreen = true;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Restores the pre-fullscreen style and rect saved by {@link #enterFullscreen}. No-op if we
+   * were not the ones who transitioned into fullscreen (savedStyle == 0 means we never entered
+   * via this path).
+   */
+  private void exitFullscreen() {
+    if (!isFullscreen) {
+      return;
+    }
+    try {
+      final var _ = (int) Win32.SetWindowLong.invokeExact(hwnd, Win32.GWL_STYLE, savedStyle);
+      final var _ =
+          (int)
+              Win32.SetWindowPos.invokeExact(
+                  hwnd,
+                  MemorySegment.NULL,
+                  savedX,
+                  savedY,
+                  savedW,
+                  savedH,
+                  Win32.SWP_NOZORDER | Win32.SWP_FRAMECHANGED);
+      isFullscreen = false;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
   }
 
   @Override
@@ -417,8 +494,96 @@ public final class Win32WebView extends WebviewBase {
   }
 
   @Override
+  public Webview unminimizeWindow() {
+    dispatchImpl(() -> Win32.showWindow(hwnd, Win32.SW_RESTORE));
+    return this;
+  }
+
+  @Override
   protected void startWindowDragImpl() {
     Win32.startWindowDrag(hwnd);
+  }
+
+  @Override
+  protected void setPositionImpl(int x, int y) {
+    Win32.setPosition(hwnd, x, y);
+  }
+
+  @Override
+  protected void centerImpl() {
+    Win32.centerWindow(hwnd, MemorySegment.NULL);
+  }
+
+  @Override
+  public int[] getPosition() {
+    return Win32.getPosition(hwnd);
+  }
+
+  @Override
+  protected void showImpl() {
+    Win32.showWindow(hwnd, Win32.SW_SHOW);
+  }
+
+  @Override
+  protected void hideImpl() {
+    Win32.showWindow(hwnd, Win32.SW_HIDE);
+  }
+
+  @Override
+  protected void setFocusImpl() {
+    Win32.setForegroundWindow(hwnd);
+  }
+
+  @Override
+  protected void setAlwaysOnTopImpl(boolean onTop) {
+    Win32.setAlwaysOnTop(hwnd, onTop);
+  }
+
+  @Override
+  protected void setResizableImpl(boolean resizable) {
+    Win32.setResizable(hwnd, resizable);
+  }
+
+  @Override
+  protected void setDecorationsImpl(boolean decorated) {
+    Win32.setDecorations(hwnd, decorated);
+  }
+
+  @Override
+  public boolean isMaximized() {
+    return Win32.isMaximized(hwnd);
+  }
+
+  @Override
+  public boolean isMinimized() {
+    return Win32.isMinimized(hwnd);
+  }
+
+  @Override
+  public boolean isFullscreen() {
+    // Win32 has no first-class fullscreen bit; enterFullscreen/exitFullscreen tracks it via the
+    // isFullscreen field. Local variable read to disambiguate from this method.
+    return this.isFullscreen;
+  }
+
+  @Override
+  public boolean isVisible() {
+    return Win32.isVisible(hwnd);
+  }
+
+  @Override
+  public boolean isFocused() {
+    return Win32.isFocused(hwnd);
+  }
+
+  @Override
+  public boolean isDecorated() {
+    return Win32.isDecorated(hwnd);
+  }
+
+  @Override
+  public boolean isResizable() {
+    return Win32.isResizable(hwnd);
   }
 
   @Override
