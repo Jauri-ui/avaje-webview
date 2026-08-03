@@ -43,4 +43,48 @@
 		</plugins>
 	</build>
 
+	<profiles>
+		<!--
+			WebKitGTK isolates its web process with bubblewrap, which needs an
+			unprivileged user namespace. Distributions that harden that away -
+			Ubuntu 24.04 ships kernel.apparmor_restrict_unprivileged_userns=1 -
+			make every WebKitWebView abort at startup with
+
+			    bwrap: setting up uid map: Permission denied
+			    ERROR: Failed to fully launch dbus-proxy
+
+			which kills the forked JVM before a single test reports, leaving only
+			surefire's "The forked VM terminated without properly saying goodbye".
+
+			The integration tests load local HTML they generate themselves, so the
+			web-content sandbox buys nothing here. Disabling it for the test JVM
+			keeps the suite runnable on hardened hosts and in containers. This is
+			scoped to tests: it changes nothing for applications using the library,
+			which still get the sandbox wherever the platform allows it.
+
+			To keep the sandbox and run the tests, re-permit user namespaces on the
+			host instead:
+			    sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+		-->
+		<profile>
+			<id>linux-webkit-sandbox-workaround</id>
+			<activation>
+				<os><family>unix</family><name>Linux</name></os>
+			</activation>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-surefire-plugin</artifactId>
+						<configuration>
+							<environmentVariables>
+								<WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS>1</WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS>
+							</environmentVariables>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+
 </project>
