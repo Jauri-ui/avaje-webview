@@ -171,14 +171,19 @@ Webview child = Webview.builder()
 
 ```java
 // From file path
-webview.setIcon(Path.of("icon.ico"));
+webview.setIcon(Path.of("icon.png"));
 
 // From classpath resource
-webview.setIcon(getClass().getResource("/icon.ico").toURI());
+webview.setIcon(getClass().getResource("/icon.png").toURI());
 ```
 
-> **Note:** the accepted file format is platform-specific. Windows requires a `.ico`; Linux requires
-> a `.png`, `.svg`, or `.xpm` (the formats GTK's icon theme can load) — anything else throws.
+> **Note:** the accepted file format is platform-specific, but a `.png` works everywhere — use one
+> icon file for all three platforms. Windows additionally accepts a `.ico`; Linux additionally
+> accepts `.svg` and `.xpm` (the formats GTK's icon theme can load). Anything else throws.
+>
+> **Windows:** `LoadImageW` only reads `.ico` containers, so a PNG is wrapped — bytes untouched — in
+> a single-entry ICO. Windows stores PNG-compressed images inside `.ico` natively, so no decoding is
+> involved and the library keeps its `java.base`-only footprint.
 >
 > **Linux:** GTK4 dropped file-based window icons, leaving only `gtk_window_set_icon_name`, so the
 > file is staged into a private directory registered on the display's icon-theme search path and

@@ -743,13 +743,26 @@ final class Win32 {
    * Moves {@code hwnd} so its top-left corner sits at logical screen coordinates ({@code x},
    * {@code y}), measured from the top-left of the primary monitor. Preserves the window's current
    * size and Z-order.
+   *
+   * <p>{@link #SetWindowPos} works in physical pixels, so the logical coordinates are scaled up by
+   * the window's current DPI - the inverse of what {@link #getPosition} does on the way out, so
+   * that {@code setPosition} followed by {@code getPosition} round-trips on a HiDPI display.
    */
   static void setPosition(MemorySegment hwnd, int x, int y) {
     try {
+      final int dpi = (int) GetDpiForWindow.invokeExact(hwnd);
+      final int physX = x * dpi / DEFAULT_DPI;
+      final int physY = y * dpi / DEFAULT_DPI;
       final var _ =
           (int)
               SetWindowPos.invokeExact(
-                  hwnd, MemorySegment.NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                  hwnd,
+                  MemorySegment.NULL,
+                  physX,
+                  physY,
+                  0,
+                  0,
+                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }

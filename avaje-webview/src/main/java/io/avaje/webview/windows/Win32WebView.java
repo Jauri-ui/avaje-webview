@@ -4,6 +4,7 @@ import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
+import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
@@ -164,6 +165,20 @@ public final class Win32WebView extends WebviewBase {
    */
   private int nestedPumpDepth = 0;
 
+  /**
+   * Set while {@code msgWndProc} is draining {@link #pending}. Navigation requests raised during the
+   * drain are captured in {@link #deferredNavigation} instead of being issued immediately - see
+   * {@link #deferNavigation}.
+   */
+  private boolean draining;
+
+  /**
+   * The navigation deferred to the end of the current {@link #pending} drain, or {@code null} when
+   * none is outstanding. Only the last request in a drain survives: an earlier {@code setHTML}
+   * followed by a {@code navigate} in the same batch would have been superseded anyway.
+   */
+  private Runnable deferredNavigation;
+
   // Combined env+ctrl handler - one COM object for both, state-dispatched.
   private MemorySegment combinedHandler;
 
@@ -257,7 +272,7 @@ public final class Win32WebView extends WebviewBase {
 
   @Override
   protected void navigateImpl(String url) {
-    webView2.navigate(url);
+    deferNavigation(() -> webView2.navigate(url));
   }
 
   @Override
@@ -355,7 +370,29 @@ public final class Win32WebView extends WebviewBase {
 
   @Override
   protected void setHtmlImpl(String html) {
-    webView2.navigateToString(html);
+    deferNavigation(() -> webView2.navigateToString(html));
+  }
+
+  /**
+   * Holds a navigation back until the current {@link #pending} drain has finished, so that any user
+   * script registered later in the same batch is in place before the document is created.
+   *
+   * <p>WebView2 runs the browser out of process: {@code Navigate}/{@code NavigateToString} is a
+   * request, and {@code AddScriptToExecuteOnDocumentCreated} only affects documents created after
+   * the browser has processed the registration. A caller that configures the webview in the natural
+   * order - {@code Webview.builder().html(...).build()} followed by {@code setInitScript(...)} -
+   * queues the navigation ahead of the script, so without this deferral the script would miss the
+   * only page load the window ever performs. WebKit (macOS/Linux) does not have the gap because its
+   * user-content controller is consulted in-process at document-start.
+   *
+   * <p>Outside a drain (a direct call from a COM callback, say) the navigation runs immediately.
+   */
+  private void deferNavigation(Runnable navigation) {
+    if (draining) {
+      deferredNavigation = navigation;
+    } else {
+      navigation.run();
+    }
   }
 
   @Override
@@ -586,13 +623,22 @@ public final class Win32WebView extends WebviewBase {
     return Win32.isResizable(hwnd);
   }
 
+  /**
+   * Sets the window icon from a {@code .ico} or {@code .png} file.
+   *
+   * <p>A PNG is wrapped in an ICO container first ({@link WindowsIcon#toIcoFile}) so that the same
+   * icon file works here as it does on macOS and Linux. Resolution happens on the caller's thread so
+   * a bad path surfaces as a normal exception rather than being thrown out of the message pump.
+   */
   @Override
   public void setIcon(Path path) {
-    final var name = path.getFileName().toString();
-    if (!name.endsWith(".ico")) {
-      throw new IllegalStateException("Win32 setIcon requires a .ico file, got: " + name);
+    final Path ico;
+    try {
+      ico = WindowsIcon.toIcoFile(path);
+    } catch (final IOException e) {
+      throw new IllegalStateException("Win32 setIcon failed to read " + path, e);
     }
-    dispatchImpl(() -> Win32.setIcon(hwnd, path));
+    dispatchImpl(() -> Win32.setIcon(hwnd, ico));
   }
 
   /**
@@ -784,8 +830,14 @@ public final class Win32WebView extends WebviewBase {
       // completion callbacks, not general task dispatch. Tasks remain in pending and
       // are processed when the outer pump sees a WM_APP with nestedPumpDepth == 0.
       if (nestedPumpDepth == 0) {
-        Runnable r;
-        while ((r = pending.poll()) != null) r.run();
+        draining = true;
+        try {
+          Runnable r;
+          while ((r = pending.poll()) != null) r.run();
+        } finally {
+          draining = false;
+        }
+        runDeferredNavigation();
       }
       return 0;
     }
@@ -793,6 +845,20 @@ public final class Win32WebView extends WebviewBase {
       return (long) Win32.DefWindowProcW.invokeExact(hWnd, msg, wParam, lParam);
     } catch (final Throwable t) {
       return 0;
+    }
+  }
+
+  /**
+   * Issues the navigation held back by {@link #deferNavigation}, if any. Called once the {@link
+   * #pending} drain has completed and every user script queued alongside it is registered.
+   */
+  private void runDeferredNavigation() {
+    final var nav = deferredNavigation;
+    deferredNavigation = null;
+    // A close() queued in the same batch has already released the controller and WebView2 object,
+    // so navigating now would call through a freed COM pointer.
+    if (nav != null && !closed) {
+      nav.run();
     }
   }
 

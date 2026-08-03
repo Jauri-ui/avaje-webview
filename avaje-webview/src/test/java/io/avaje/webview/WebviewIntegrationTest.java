@@ -7,13 +7,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 
 @Timeout(value = 30, unit = TimeUnit.SECONDS)
 class WebviewIntegrationTest {
@@ -434,6 +440,43 @@ class WebviewIntegrationTest {
     assertTrue(called.get(), "bound function was not available when init script ran");
   }
 
+  /**
+   * The builder sets content before the caller can add an init script, so {@code setInitScript}
+   * necessarily lands after {@code setHTML} has been requested. The script must still run on that
+   * first load.
+   *
+   * <p>Regression test for the Windows backend: WebView2 hosts the browser out of process, so a
+   * {@code NavigateToString} issued before {@code AddScriptToExecuteOnDocumentCreated} would create
+   * the document without the script. {@link io.avaje.webview.windows.Win32WebView} now holds the
+   * navigation until the dispatch batch that requested it has drained.
+   */
+  @Test
+  void initScriptSetAfterHtmlStillRunsOnFirstLoad() {
+    final var failure = new AtomicReference<Throwable>();
+    final var called = new AtomicBoolean(false);
+
+    try (var w =
+        Webview.builder().html("<script>window.check(window.__initRan === true);</script>").build()) {
+      w.setInitScript("window.__initRan = true;");
+      w.bind(
+          "check",
+          req -> {
+            try {
+              assertEquals("[true]", req);
+              called.set(true);
+            } catch (final Throwable t) {
+              failure.set(t);
+            } finally {
+              w.dispatch(w::close);
+            }
+            return "null";
+          });
+      w.run();
+    }
+    rethrow(failure);
+    assertTrue(called.get(), "check binding was never invoked");
+  }
+
   // -------------------------------------------------------------------------
   // setHTML — content replacement
   // -------------------------------------------------------------------------
@@ -620,6 +663,108 @@ class WebviewIntegrationTest {
       Files.deleteIfExists(tmp);
     }
     assertTrue(called.get(), "largeFileNavLoaded binding was never invoked");
+  }
+
+  // -------------------------------------------------------------------------
+  // Window state primitives
+  // -------------------------------------------------------------------------
+
+  /**
+   * Every window mutator paired with the getter that should observe it.
+   *
+   * <p>Windows-only: GTK4 documents several of these as no-ops (it has no {@code is_iconified}, and
+   * window positioning is compositor-controlled on Wayland), so the same assertions would be wrong
+   * to make there. macOS is covered by its own backend behaviour.
+   *
+   * <p>Mutators are asynchronous - {@link WebviewBase} routes them through {@code dispatchImpl} -
+   * so each check is dispatched too. It lands behind the mutator in the same FIFO queue and
+   * therefore observes the settled state.
+   */
+  @Test
+  @EnabledOnOs(OS.WINDOWS)
+  void windowStatePrimitivesRoundTripOnWindows() {
+    final var results = new ArrayList<String>();
+
+    try (var w = Webview.builder().title("primitives").width(500).height(320).build()) {
+      final BiConsumer<String, BooleanSupplier> pass =
+          (name, get) -> w.dispatch(() -> results.add(get.getAsBoolean() ? name + "=true" : name + "=false"));
+
+      w.bind(
+          "__go__",
+          _ -> {
+            // No initial-visibility assertion: this runs from a document-start script, and the
+            // main window is only shown once the first navigation completes. isVisible is covered
+            // by the explicit hide/show pair below.
+            pass.accept("initial.decorated", w::isDecorated);
+            pass.accept("initial.resizable", w::isResizable);
+
+            w.maximizeWindow();
+            pass.accept("maximized", w::isMaximized);
+            w.unmaximizeWindow();
+            pass.accept("unmaximized", w::isMaximized);
+
+            w.minimizeWindow();
+            pass.accept("minimized", w::isMinimized);
+            w.unminimizeWindow();
+            pass.accept("unminimized", w::isMinimized);
+
+            w.setFullscreen(true);
+            pass.accept("fullscreen", w::isFullscreen);
+            w.setFullscreen(false);
+            pass.accept("unfullscreen", w::isFullscreen);
+            // Leaving fullscreen must put back the exact style it stripped on the way in.
+            pass.accept("restored.decorated", w::isDecorated);
+            pass.accept("restored.resizable", w::isResizable);
+
+            w.setDecorations(false);
+            pass.accept("undecorated", w::isDecorated);
+            w.setDecorations(true);
+            pass.accept("redecorated", w::isDecorated);
+
+            w.setResizable(false);
+            pass.accept("fixed", w::isResizable);
+            w.setResizable(true);
+            pass.accept("resizable", w::isResizable);
+
+            w.hide();
+            pass.accept("hidden", w::isVisible);
+            w.show();
+            pass.accept("shown", w::isVisible);
+
+            w.setPosition(150, 90);
+            w.dispatch(
+                () -> {
+                  final var p = w.getPosition();
+                  results.add("position=" + p[0] + "," + p[1]);
+                });
+
+            w.dispatch(w::close);
+            return "null";
+          });
+      w.setHTML("<script>window.__go__();</script>");
+      w.run();
+    }
+
+    assertEquals(
+        List.of(
+            "initial.decorated=true",
+            "initial.resizable=true",
+            "maximized=true",
+            "unmaximized=false",
+            "minimized=true",
+            "unminimized=false",
+            "fullscreen=true",
+            "unfullscreen=false",
+            "restored.decorated=true",
+            "restored.resizable=true",
+            "undecorated=false",
+            "redecorated=true",
+            "fixed=false",
+            "resizable=true",
+            "hidden=false",
+            "shown=true",
+            "position=150,90"),
+        results);
   }
 
   // -------------------------------------------------------------------------
