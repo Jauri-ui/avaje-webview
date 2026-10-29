@@ -413,8 +413,8 @@ public interface Webview extends Closeable, Runnable {
    * called from any thread; the dialog runs on the UI thread.
    *
    * @return the chosen paths, empty if the user cancelled
-   * @throws UnsupportedOperationException on platforms without a native implementation (currently
-   *     only macOS has one)
+   * @throws UnsupportedOperationException on platforms without a native implementation (macOS and
+   *     Linux/GTK 4.10+ have one; Windows does not yet)
    */
   default List<Path> showOpenDialog(Dialogs.FileDialogOptions options) {
     throw new UnsupportedOperationException("Native dialogs are not implemented on this platform");

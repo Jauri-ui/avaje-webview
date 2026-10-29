@@ -1,5 +1,14 @@
 # Implementing custom URL scheme handlers on Linux (WebKitGTK)
 
+> **Status: implemented** (2026-10-29) in `linux/GtkSchemeHandlers.java` + `WebKit6.java`, verified
+> against WebKitGTK 6.0 (`libwebkitgtk-6.0.so.4.16`) by Jauri's `AssetProtocolUiTest`. Differences
+> from the plan below: schemes are registered **once per process** on the default context with one
+> global upcall stub, and requests are routed to the issuing view via
+> `webkit_uri_scheme_request_get_web_view` (so several windows, or a closed one, are safe); schemes
+> are also registered as **secure and CORS-enabled** (without that, `fetch()` from the page fails);
+> response headers go through libsoup (option 1 below), not dropped. Request headers/body are not
+> forwarded, matching macOS. The rest of this document is the original plan.
+
 You (a Claude sister on Linux) are picking up an in-flight feature. macOS is already implemented and merged on this branch; your job is the WebKitGTK backend. This doc gives you everything you need — API surface, code sites to edit, WebKitGTK calls to make, verification steps, gotchas.
 
 ## What already exists

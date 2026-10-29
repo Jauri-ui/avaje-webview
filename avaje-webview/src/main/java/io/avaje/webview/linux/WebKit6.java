@@ -67,8 +67,146 @@ final class WebKit6 {
   private static final SymbolLookup JSC_LIB =
       SymbolLookup.libraryLookup("libjavascriptcoregtk-6.0.so.1", Arena.global());
 
-  /** Combined lookup: try WebKit first, then JSC. */
-  private static final SymbolLookup LOOKUP = WEBKIT_LIB.or(JSC_LIB);
+  /**
+   * Lookup for {@code libsoup-3.0.so.0}, a WebKitGTK 6.0 dependency, so it is present wherever
+   * WebKitGTK is. Only {@code SoupMessageHeaders} is used, for scheme-handler response headers.
+   */
+  private static final SymbolLookup SOUP_LIB =
+      SymbolLookup.libraryLookup("libsoup-3.0.so.0", Arena.global());
+
+  /** Combined lookup: try WebKit first, then JSC, then libsoup. */
+  private static final SymbolLookup LOOKUP = WEBKIT_LIB.or(JSC_LIB).or(SOUP_LIB);
+
+  /**
+   * {@code FunctionDescriptor} for {@code WebKitURISchemeRequestCallback}: {@code
+   * void(*)(WebKitURISchemeRequest* request, gpointer user_data)}.
+   */
+  static final FunctionDescriptor URI_SCHEME_REQUEST_CALLBACK_DESC =
+      FunctionDescriptor.ofVoid(ADDRESS, ADDRESS);
+
+  /** {@code SOUP_MESSAGE_HEADERS_RESPONSE}. */
+  private static final int SOUP_MESSAGE_HEADERS_RESPONSE = 1;
+
+  /**
+   * {@code webkit_web_context_get_default() -> WebKitWebContext*}
+   *
+   * <p>The context every {@code webkit_web_view_new()} view uses. Borrowed; never unref it.
+   */
+  private static final MethodHandle WEBKIT_WEB_CONTEXT_GET_DEFAULT =
+      downcall("webkit_web_context_get_default", FunctionDescriptor.of(ADDRESS));
+
+  /**
+   * {@code webkit_web_context_register_uri_scheme(WebKitWebContext* ctx, const gchar* scheme,
+   * WebKitURISchemeRequestCallback callback, gpointer user_data, GDestroyNotify destroy) -> void}
+   *
+   * <p>Routes every {@code scheme://} load in views of {@code ctx} to {@code callback}, on the GTK
+   * thread. Registration is per context, not per view, and cannot be undone.
+   */
+  private static final MethodHandle WEBKIT_WEB_CONTEXT_REGISTER_URI_SCHEME =
+      downcall(
+          "webkit_web_context_register_uri_scheme",
+          FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+
+  /** {@code webkit_web_context_get_security_manager(WebKitWebContext*) -> WebKitSecurityManager*} */
+  private static final MethodHandle WEBKIT_WEB_CONTEXT_GET_SECURITY_MANAGER =
+      downcall("webkit_web_context_get_security_manager", FunctionDescriptor.of(ADDRESS, ADDRESS));
+
+  /**
+   * {@code webkit_security_manager_register_uri_scheme_as_secure(WebKitSecurityManager*, const
+   * gchar* scheme) -> void}. A secure scheme is not mixed content when loaded from an {@code
+   * https} page.
+   */
+  private static final MethodHandle WEBKIT_SECURITY_MANAGER_REGISTER_AS_SECURE =
+      downcall(
+          "webkit_security_manager_register_uri_scheme_as_secure",
+          FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
+
+  /**
+   * {@code webkit_security_manager_register_uri_scheme_as_cors_enabled(WebKitSecurityManager*,
+   * const gchar* scheme) -> void}. Without it WebKit refuses {@code fetch()}/XHR to the scheme from
+   * any other origin, whatever {@code Access-Control-Allow-Origin} the response carries.
+   */
+  private static final MethodHandle WEBKIT_SECURITY_MANAGER_REGISTER_AS_CORS_ENABLED =
+      downcall(
+          "webkit_security_manager_register_uri_scheme_as_cors_enabled",
+          FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
+
+  /** {@code webkit_uri_scheme_request_get_uri(WebKitURISchemeRequest*) -> const gchar*} (borrowed) */
+  private static final MethodHandle WEBKIT_URI_SCHEME_REQUEST_GET_URI =
+      downcall("webkit_uri_scheme_request_get_uri", FunctionDescriptor.of(ADDRESS, ADDRESS));
+
+  /**
+   * {@code webkit_uri_scheme_request_get_http_method(WebKitURISchemeRequest*) -> const gchar*}
+   * (borrowed; may be {@code NULL})
+   */
+  private static final MethodHandle WEBKIT_URI_SCHEME_REQUEST_GET_HTTP_METHOD =
+      downcall("webkit_uri_scheme_request_get_http_method", FunctionDescriptor.of(ADDRESS, ADDRESS));
+
+  /**
+   * {@code webkit_uri_scheme_request_get_web_view(WebKitURISchemeRequest*) -> WebKitWebView*}
+   * (borrowed). Identifies which view a request belongs to, since registration is per context.
+   */
+  private static final MethodHandle WEBKIT_URI_SCHEME_REQUEST_GET_WEB_VIEW =
+      downcall("webkit_uri_scheme_request_get_web_view", FunctionDescriptor.of(ADDRESS, ADDRESS));
+
+  /**
+   * {@code webkit_uri_scheme_request_finish_with_response(WebKitURISchemeRequest*,
+   * WebKitURISchemeResponse*) -> void}. Does not take the response reference.
+   */
+  private static final MethodHandle WEBKIT_URI_SCHEME_REQUEST_FINISH_WITH_RESPONSE =
+      downcall(
+          "webkit_uri_scheme_request_finish_with_response",
+          FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
+
+  /**
+   * {@code webkit_uri_scheme_request_finish_error(WebKitURISchemeRequest*, GError*) -> void}. Does
+   * not take the error.
+   */
+  private static final MethodHandle WEBKIT_URI_SCHEME_REQUEST_FINISH_ERROR =
+      downcall("webkit_uri_scheme_request_finish_error", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
+
+  /**
+   * {@code webkit_uri_scheme_response_new(GInputStream* stream, gint64 length) ->
+   * WebKitURISchemeResponse*}. Takes its own reference to {@code stream}.
+   */
+  private static final MethodHandle WEBKIT_URI_SCHEME_RESPONSE_NEW =
+      downcall("webkit_uri_scheme_response_new", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
+
+  /**
+   * {@code webkit_uri_scheme_response_set_status(WebKitURISchemeResponse*, guint status_code,
+   * const gchar* reason_phrase) -> void}. A {@code NULL} phrase gets the standard one for the code.
+   */
+  private static final MethodHandle WEBKIT_URI_SCHEME_RESPONSE_SET_STATUS =
+      downcall(
+          "webkit_uri_scheme_response_set_status",
+          FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT, ADDRESS));
+
+  /** {@code webkit_uri_scheme_response_set_content_type(WebKitURISchemeResponse*, const gchar*)} */
+  private static final MethodHandle WEBKIT_URI_SCHEME_RESPONSE_SET_CONTENT_TYPE =
+      downcall(
+          "webkit_uri_scheme_response_set_content_type",
+          FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
+
+  /**
+   * {@code webkit_uri_scheme_response_set_http_headers(WebKitURISchemeResponse*,
+   * SoupMessageHeaders*) -> void}. Takes ownership of the headers.
+   */
+  private static final MethodHandle WEBKIT_URI_SCHEME_RESPONSE_SET_HTTP_HEADERS =
+      downcall(
+          "webkit_uri_scheme_response_set_http_headers",
+          FunctionDescriptor.ofVoid(ADDRESS, ADDRESS));
+
+  /** {@code soup_message_headers_new(SoupMessageHeadersType type) -> SoupMessageHeaders*} */
+  private static final MethodHandle SOUP_MESSAGE_HEADERS_NEW =
+      downcall("soup_message_headers_new", FunctionDescriptor.of(ADDRESS, JAVA_INT));
+
+  /**
+   * {@code soup_message_headers_append(SoupMessageHeaders*, const char* name, const char* value) ->
+   * void}
+   */
+  private static final MethodHandle SOUP_MESSAGE_HEADERS_APPEND =
+      downcall(
+          "soup_message_headers_append", FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS));
 
   /**
    * {@code webkit_web_view_new() -> WebKitWebView*}
@@ -627,6 +765,125 @@ final class WebKit6 {
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }
+  }
+
+  /** The default {@code WebKitWebContext*}, borrowed. */
+  static MemorySegment webkitWebContextGetDefault() {
+    try {
+      return (MemorySegment) WEBKIT_WEB_CONTEXT_GET_DEFAULT.invokeExact();
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Registers {@code scheme} on {@code ctx}, routes it to {@code callback}, and marks it secure and
+   * CORS-enabled so pages can {@code fetch()} it.
+   *
+   * @param callback a {@code WebKitURISchemeRequestCallback} upcall stub that must outlive {@code
+   *     ctx}, which in practice means the process
+   */
+  static void webkitWebContextRegisterUriScheme(
+      MemorySegment ctx, String scheme, MemorySegment callback) {
+    try (var a = Arena.ofConfined()) {
+      final var s = a.allocateFrom(scheme);
+      WEBKIT_WEB_CONTEXT_REGISTER_URI_SCHEME.invokeExact(
+          ctx, s, callback, MemorySegment.NULL, MemorySegment.NULL);
+      final var sm = (MemorySegment) WEBKIT_WEB_CONTEXT_GET_SECURITY_MANAGER.invokeExact(ctx);
+      WEBKIT_SECURITY_MANAGER_REGISTER_AS_SECURE.invokeExact(sm, s);
+      WEBKIT_SECURITY_MANAGER_REGISTER_AS_CORS_ENABLED.invokeExact(sm, s);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** The request's full URI. */
+  static String uriSchemeRequestGetUri(MemorySegment request) {
+    try {
+      final var p = (MemorySegment) WEBKIT_URI_SCHEME_REQUEST_GET_URI.invokeExact(request);
+      return cString(p);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** The request's HTTP method, or {@code null} if WebKit did not record one. */
+  static String uriSchemeRequestGetHttpMethod(MemorySegment request) {
+    try {
+      final var p = (MemorySegment) WEBKIT_URI_SCHEME_REQUEST_GET_HTTP_METHOD.invokeExact(request);
+      return cString(p);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /** The borrowed {@code WebKitWebView*} that issued the request. */
+  static MemorySegment uriSchemeRequestGetWebView(MemorySegment request) {
+    try {
+      return (MemorySegment) WEBKIT_URI_SCHEME_REQUEST_GET_WEB_VIEW.invokeExact(request);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Completes {@code request} with an HTTP-shaped response.
+   *
+   * @param headers extra response headers; {@code contentType} is added to them
+   */
+  static void uriSchemeRequestFinish(
+      MemorySegment request,
+      int status,
+      String contentType,
+      java.util.Map<String, String> headers,
+      byte[] body) {
+    final var stream = GLib.gMemoryInputStreamFromBytes(body);
+    try (var a = Arena.ofConfined()) {
+      final var response =
+          (MemorySegment) WEBKIT_URI_SCHEME_RESPONSE_NEW.invokeExact(stream, (long) body.length);
+      WEBKIT_URI_SCHEME_RESPONSE_SET_STATUS.invokeExact(response, status, MemorySegment.NULL);
+      final var soupHeaders =
+          (MemorySegment) SOUP_MESSAGE_HEADERS_NEW.invokeExact(SOUP_MESSAGE_HEADERS_RESPONSE);
+      if (contentType != null) {
+        WEBKIT_URI_SCHEME_RESPONSE_SET_CONTENT_TYPE.invokeExact(response, utf8(a, contentType));
+        // Repeated in the header map: WebKit builds the response's header fields from it.
+        SOUP_MESSAGE_HEADERS_APPEND.invokeExact(
+            soupHeaders, a.allocateFrom("Content-Type"), utf8(a, contentType));
+      }
+      for (final var h : headers.entrySet()) {
+        SOUP_MESSAGE_HEADERS_APPEND.invokeExact(
+            soupHeaders, utf8(a, h.getKey()), utf8(a, h.getValue()));
+      }
+      WEBKIT_URI_SCHEME_RESPONSE_SET_HTTP_HEADERS.invokeExact(response, soupHeaders);
+      WEBKIT_URI_SCHEME_REQUEST_FINISH_WITH_RESPONSE.invokeExact(request, response);
+      GLib.gObjectUnref(response);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    } finally {
+      GLib.gObjectUnref(stream);
+    }
+  }
+
+  /** Fails {@code request} with a {@code GError} carrying {@code message}. */
+  static void uriSchemeRequestFinishError(MemorySegment request, String message) {
+    final var error = GLib.gErrorNew("io.avaje.webview.SchemeHandler", 1, message);
+    try {
+      WEBKIT_URI_SCHEME_REQUEST_FINISH_ERROR.invokeExact(request, error);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    } finally {
+      GLib.gErrorFree(error);
+    }
+  }
+
+  private static MemorySegment utf8(Arena a, String s) {
+    return a.allocateFrom(s, java.nio.charset.StandardCharsets.UTF_8);
+  }
+
+  private static String cString(MemorySegment p) {
+    return p.address() == 0L
+        ? null
+        : p.reinterpret(Long.MAX_VALUE).getString(0, java.nio.charset.StandardCharsets.UTF_8);
   }
 
   private WebKit6() {}

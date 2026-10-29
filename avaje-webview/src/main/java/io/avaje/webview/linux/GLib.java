@@ -9,6 +9,7 @@ import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
+import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 
 /**
@@ -55,8 +56,12 @@ final class GLib {
   private static final SymbolLookup GOBJECT_LIB =
       SymbolLookup.libraryLookup("libgobject-2.0.so.0", Arena.global());
 
+  /** Lookup for {@code libgio-2.0.so.0}, home of {@code GInputStream}. */
+  private static final SymbolLookup GIO_LIB =
+      SymbolLookup.libraryLookup("libgio-2.0.so.0", Arena.global());
+
   /** Chained so {@link #downcall} resolves a symbol without caring which library owns it. */
-  private static final SymbolLookup LOOKUP = GLIB_LIB.or(GOBJECT_LIB);
+  private static final SymbolLookup LOOKUP = GLIB_LIB.or(GOBJECT_LIB).or(GIO_LIB);
 
   /**
    * {@code g_main_context_iteration(GMainContext* context, gboolean may_block) -> gboolean}
@@ -191,6 +196,44 @@ final class GLib {
           "g_signal_handlers_disconnect_matched",
           FunctionDescriptor.of(
               JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+
+  /**
+   * {@code g_bytes_new(gconstpointer data, gsize size) -> GBytes*}
+   *
+   * <p>Copies {@code size} bytes into a new reference-counted {@code GBytes}, so the source buffer
+   * can be released straight away.
+   */
+  private static final MethodHandle G_BYTES_NEW =
+      downcall("g_bytes_new", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_LONG));
+
+  /** {@code g_bytes_unref(GBytes* bytes) -> void} */
+  private static final MethodHandle G_BYTES_UNREF =
+      downcall("g_bytes_unref", FunctionDescriptor.ofVoid(ADDRESS));
+
+  /**
+   * {@code g_memory_input_stream_new_from_bytes(GBytes* bytes) -> GInputStream*}
+   *
+   * <p>Wraps a {@code GBytes} in a {@code GInputStream}. The stream takes its own reference to the
+   * bytes; the caller owns the returned stream.
+   */
+  private static final MethodHandle G_MEMORY_INPUT_STREAM_NEW_FROM_BYTES =
+      downcall("g_memory_input_stream_new_from_bytes", FunctionDescriptor.of(ADDRESS, ADDRESS));
+
+  /** {@code g_quark_from_string(const gchar* string) -> GQuark} ({@code guint32}). */
+  private static final MethodHandle G_QUARK_FROM_STRING =
+      downcall("g_quark_from_string", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+
+  /**
+   * {@code g_error_new_literal(GQuark domain, gint code, const gchar* message) -> GError*}. The
+   * caller owns the error and frees it with {@link #G_ERROR_FREE}.
+   */
+  private static final MethodHandle G_ERROR_NEW_LITERAL =
+      downcall(
+          "g_error_new_literal", FunctionDescriptor.of(ADDRESS, JAVA_INT, JAVA_INT, ADDRESS));
+
+  /** {@code g_error_free(GError* error) -> void} */
+  private static final MethodHandle G_ERROR_FREE =
+      downcall("g_error_free", FunctionDescriptor.ofVoid(ADDRESS));
 
   private static MethodHandle downcall(String sym, FunctionDescriptor desc) {
     return LINKER.downcallHandle(
@@ -356,6 +399,49 @@ final class GLib {
                   MemorySegment.NULL,
                   MemorySegment.NULL,
                   data);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Copies {@code data} into a new {@code GInputStream}.
+   *
+   * @return a {@code GInputStream*} owned by the caller, released with {@link #gObjectUnref}
+   */
+  static MemorySegment gMemoryInputStreamFromBytes(byte[] data) {
+    try (var a = Arena.ofConfined()) {
+      // g_bytes_new(NULL, 0) is valid, but a zero-length allocation is not, so keep one byte.
+      final var buf = a.allocate(Math.max(1, data.length));
+      MemorySegment.copy(data, 0, buf, ValueLayout.JAVA_BYTE, 0, data.length);
+      final var bytes = (MemorySegment) G_BYTES_NEW.invokeExact(buf, (long) data.length);
+      final var stream = (MemorySegment) G_MEMORY_INPUT_STREAM_NEW_FROM_BYTES.invokeExact(bytes);
+      G_BYTES_UNREF.invokeExact(bytes);
+      return stream;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Creates a {@code GError} in {@code domain}.
+   *
+   * @return a {@code GError*} owned by the caller, released with {@link #gErrorFree}
+   */
+  static MemorySegment gErrorNew(String domain, int code, String message) {
+    try (var a = Arena.ofConfined()) {
+      final var quark = (int) G_QUARK_FROM_STRING.invokeExact(a.allocateFrom(domain));
+      return (MemorySegment)
+          G_ERROR_NEW_LITERAL.invokeExact(
+              quark, code, a.allocateFrom(message, java.nio.charset.StandardCharsets.UTF_8));
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  static void gErrorFree(MemorySegment error) {
+    try {
+      G_ERROR_FREE.invokeExact(error);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }

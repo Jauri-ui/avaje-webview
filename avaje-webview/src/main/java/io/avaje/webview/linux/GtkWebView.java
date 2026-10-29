@@ -72,6 +72,8 @@ public final class GtkWebView extends WebviewBase {
   private MemorySegment surfaceSizeStub; // "notify::width"/"notify::height" on the GdkSurface
 
   private final ConcurrentLinkedQueue<Runnable> pendingDispatches = new ConcurrentLinkedQueue<>();
+  /** Custom URL schemes for this view, registered through {@link GtkSchemeHandlers}. */
+  private final java.util.Map<String, io.avaje.webview.SchemeHandler> schemeHandlers;
   private final int initialWidth;
   private final int initialHeight;
 
@@ -118,13 +120,7 @@ public final class GtkWebView extends WebviewBase {
       boolean moveParentWithChild,
       java.util.Map<String, io.avaje.webview.SchemeHandler> schemeHandlers) {
     super(redirectConsole, borderless, outline, transparent, parentWindow, moveParentWithChild);
-    if (schemeHandlers != null && !schemeHandlers.isEmpty()) {
-      // See docs/scheme-handler-linux.md - needs
-      // webkit_web_context_register_uri_scheme with a WebKitURISchemeRequestCallback.
-      throw new UnsupportedOperationException(
-          "Custom URL scheme handlers are not yet implemented for Linux/WebKitGTK. "
-              + "See docs/scheme-handler-linux.md for the implementation plan.");
-    }
+    this.schemeHandlers = schemeHandlers == null ? java.util.Map.of() : schemeHandlers;
     this.initialWidth = width;
     this.initialHeight = height;
     openWindows.incrementAndGet();
@@ -132,6 +128,7 @@ public final class GtkWebView extends WebviewBase {
     if (gtkThread == null || gtkThread == Thread.currentThread()) {
       gtkThread = Thread.currentThread();
       applyDmabufWorkaround();
+      applySandboxWorkaround();
       initGtk();
       buildUpcallStubs();
       initWindowAndWebView(debug);
@@ -201,6 +198,7 @@ public final class GtkWebView extends WebviewBase {
       Gtk4.gtkWindowDestroy(window);
     }
     if (webView != null && webView.address() != 0L) {
+      GtkSchemeHandlers.unregister(webView);
       // Balances the g_object_ref_sink in initWindowAndWebView. gtk_window_set_child() doesn't
       // take ownership, it holds its own ref through the widget hierarchy, which gtk_window_destroy
       // releases. The ref from the sink is ours, and without this the WebKitWebView leaks.
@@ -529,6 +527,69 @@ public final class GtkWebView extends WebviewBase {
     dispatchImpl(() -> LinuxHelper.setIcon(this, path, ext));
   }
 
+  @Override
+  public java.util.List<Path> showOpenDialog(io.avaje.webview.Dialogs.FileDialogOptions options) {
+    return awaitDialog(out -> GtkDialogs.startOpen(dialogParent(), options, out));
+  }
+
+  @Override
+  public Path showSaveDialog(io.avaje.webview.Dialogs.FileDialogOptions options) {
+    return awaitDialog(out -> GtkDialogs.startSave(dialogParent(), options, out));
+  }
+
+  @Override
+  public int showMessageDialog(io.avaje.webview.Dialogs.MessageDialogOptions options) {
+    return awaitDialog(out -> GtkDialogs.startMessage(dialogParent(), options, out));
+  }
+
+  private MemorySegment dialogParent() {
+    return windowDestroyed || window == null ? MemorySegment.NULL : window;
+  }
+
+  /**
+   * Starts an async GTK dialog on the GTK thread and blocks the caller until it completes.
+   *
+   * <p>Off the GTK thread the caller just waits. On it, waiting would deadlock the loop that has
+   * to deliver the dialog's callback, so the main context is iterated here until the result is in,
+   * the way GTK3's {@code gtk_dialog_run} did. Arenas queued for closing meanwhile are left to
+   * {@link #run}'s loop.
+   */
+  private <T> T awaitDialog(
+      java.util.function.Consumer<java.util.concurrent.CompletableFuture<T>> start) {
+    final var result = new java.util.concurrent.CompletableFuture<T>();
+    final Runnable begin =
+        () -> {
+          try {
+            start.accept(result);
+          } catch (final Throwable t) {
+            result.completeExceptionally(t);
+          }
+        };
+    if (Thread.currentThread() == gtkThread) {
+      begin.run();
+      while (!result.isDone()) {
+        GLib.gMainContextIteration(MemorySegment.NULL, 1);
+      }
+    } else {
+      dispatchImpl(begin);
+    }
+    try {
+      return result.get();
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while waiting for a dialog", e);
+    } catch (final java.util.concurrent.ExecutionException e) {
+      if (e.getCause() instanceof UnsatisfiedLinkError
+          || e.getCause() instanceof ExceptionInInitializerError
+          || e.getCause() instanceof NoClassDefFoundError) {
+        throw new UnsupportedOperationException(
+            "Native dialogs need GTK 4.10 or newer", e.getCause());
+      }
+      if (e.getCause() instanceof RuntimeException re) throw re;
+      throw new RuntimeException(e.getCause());
+    }
+  }
+
   /**
    * GSourceFunc callback that drains the pending dispatch queue on the GTK main thread. Returns
    * G_SOURCE_REMOVE (0) since every dispatch() adds its own idle source.
@@ -662,6 +723,71 @@ public final class GtkWebView extends WebviewBase {
         || System.getenv("WEBKIT_DISABLE_DMABUF_RENDERER") != null) {
       return;
     }
+    setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+  }
+
+  private static final String SANDBOX_ENV = "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS";
+  private static boolean sandboxProbed = false;
+
+  /**
+   * WebKitGTK sandboxes its web process with bubblewrap, which needs an unprivileged user
+   * namespace. Hosts that deny those (Ubuntu 24.04+ via {@code
+   * kernel.apparmor_restrict_unprivileged_userns=1}) make every WebKitGTK process abort at
+   * startup with {@code bwrap: setting up uid map: Permission denied}, from a {@code g_error()} in
+   * native code: no exception, no diagnostic, the process is just gone.
+   *
+   * <p>So probe once, before GTK starts, by running {@code bwrap --unshare-user} the way WebKit
+   * will. If it fails, disable WebKit's sandbox (it cannot start anyway) and log a warning naming
+   * the cause. Skipped when the variable is already set, inside Flatpak (WebKit sandboxes through
+   * the portal there), when {@code bwrap} is not installed, or with {@code
+   * -Davaje.webview.sandboxProbe=false} for a deployment that would rather fail than run
+   * unsandboxed.
+   */
+  private static void applySandboxWorkaround() {
+    if (sandboxProbed) {
+      return;
+    }
+    sandboxProbed = true;
+    if (System.getenv(SANDBOX_ENV) != null
+        || "false".equalsIgnoreCase(System.getProperty("avaje.webview.sandboxProbe"))
+        || new File("/.flatpak-info").exists()) {
+      return;
+    }
+    final int exit;
+    try {
+      final var probe =
+          new ProcessBuilder("bwrap", "--unshare-user", "--dev-bind", "/", "/", "true")
+              .redirectErrorStream(true)
+              .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+              .start();
+      if (!probe.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+        probe.destroyForcibly();
+        return; // inconclusive; leave WebKit to its defaults
+      }
+      exit = probe.exitValue();
+    } catch (final java.io.IOException e) {
+      return; // no bwrap on PATH: WebKit was built without it, or will report it itself
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return;
+    }
+    if (exit == 0) {
+      return;
+    }
+    System.getLogger(GtkWebView.class.getName())
+        .log(
+            System.Logger.Level.WARNING,
+            "Unprivileged user namespaces are blocked on this host (bwrap --unshare-user failed),"
+                + " so WebKitGTK's web-process sandbox cannot start. Running WITHOUT the sandbox ("
+                + SANDBOX_ENV
+                + "=1). To keep it, allow user namespaces, e.g. sysctl"
+                + " kernel.apparmor_restrict_unprivileged_userns=0 or an AppArmor profile with"
+                + " 'userns,'. Set -Davaje.webview.sandboxProbe=false to fail instead.");
+    setenv(SANDBOX_ENV, "1");
+  }
+
+  /** POSIX {@code setenv(name, value, 1)}; best effort. */
+  private static void setenv(String name, String value) {
     try {
       final var libc = SymbolLookup.libraryLookup("libc.so.6", Arena.global());
       final var setenv =
@@ -674,10 +800,7 @@ public final class GtkWebView extends WebviewBase {
                       ValueLayout.ADDRESS,
                       ValueLayout.JAVA_INT));
       try (var a = Arena.ofConfined()) {
-        final var _ =
-            (int)
-                setenv.invokeExact(
-                    a.allocateFrom("WEBKIT_DISABLE_DMABUF_RENDERER"), a.allocateFrom("1"), 1);
+        final var _ = (int) setenv.invokeExact(a.allocateFrom(name), a.allocateFrom(value), 1);
       }
     } catch (final Throwable ignored) {
     }
@@ -802,6 +925,8 @@ public final class GtkWebView extends WebviewBase {
     if (transparent) {
       WebKit6.webkitWebViewSetBackgroundColor(webView, 0f, 0f, 0f, 0f);
     }
+    // Before any load, so the first request under a scheme already reaches its handler.
+    GtkSchemeHandlers.register(webView, schemeHandlers);
 
     ucManager = WebKit6.webkitWebViewGetUserContentManager(webView);
     try (var a = Arena.ofConfined()) {
