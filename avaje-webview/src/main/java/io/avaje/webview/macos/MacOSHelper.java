@@ -536,6 +536,141 @@ final class MacOSHelper {
     }
   }
 
+  static boolean isMainThread() {
+    try (var a = Arena.ofConfined()) {
+      final var r = send0(ObjC.getClass(a, "NSThread"), sel(a, "isMainThread"));
+      return (r.address() & 0xFF) != 0; // BOOL comes back in the low byte
+    }
+  }
+
+  private static MemorySegment bool(boolean b) {
+    return MemorySegment.ofAddress(b ? 1 : 0);
+  }
+
+  private static MemorySegment index(long i) {
+    return MemorySegment.ofAddress(i);
+  }
+
+  /** NSURL for a filesystem path. */
+  private static MemorySegment fileUrl(Arena a, Path p, boolean directory) {
+    return ObjC.send2(
+        ObjC.getClass(a, "NSURL"),
+        sel(a, "fileURLWithPath:isDirectory:"),
+        nsString(a, p.toAbsolutePath().toString()),
+        bool(directory));
+  }
+
+  private static void configurePanel(
+      Arena a, MemorySegment panel, io.avaje.webview.Dialogs.FileDialogOptions o) {
+    if (o.title() != null) {
+      sendVoid1(panel, sel(a, "setMessage:"), nsString(a, o.title()));
+    }
+    sendVoid1(panel, sel(a, "setCanCreateDirectories:"), bool(o.canCreateDirectories()));
+    if (o.filters() != null && !o.filters().isEmpty()) {
+      final var types = send0(ObjC.getClass(a, "NSMutableArray"), sel(a, "array"));
+      boolean any = false;
+      for (var f : o.filters()) {
+        for (var ext : f.extensions()) {
+          if (ext.equals("*")) {
+            return; // a wildcard allows everything: no restriction
+          }
+          sendVoid1(types, sel(a, "addObject:"), nsString(a, ext));
+          any = true;
+        }
+      }
+      if (any) {
+        sendVoid1(panel, sel(a, "setAllowedFileTypes:"), types);
+      }
+    }
+  }
+
+  private static void applyDefaultPath(
+      Arena a, MemorySegment panel, Path p, boolean isSave) {
+    if (p == null) return;
+    final boolean dir = java.nio.file.Files.isDirectory(p);
+    if (dir) {
+      sendVoid1(panel, sel(a, "setDirectoryURL:"), fileUrl(a, p, true));
+    } else if (p.getParent() != null) {
+      sendVoid1(panel, sel(a, "setDirectoryURL:"), fileUrl(a, p.getParent(), true));
+      if (isSave && p.getFileName() != null) {
+        sendVoid1(panel, sel(a, "setNameFieldStringValue:"), nsString(a, p.getFileName().toString()));
+      }
+    }
+  }
+
+  private static Path urlToPath(Arena a, MemorySegment url) {
+    return Path.of(fromNSString(a, send0(url, sel(a, "path"))));
+  }
+
+  static java.util.List<Path> openDialog(io.avaje.webview.Dialogs.FileDialogOptions o) {
+    try (var a = Arena.ofConfined()) {
+      final var panel = send0(ObjC.getClass(a, "NSOpenPanel"), sel(a, "openPanel"));
+      configurePanel(a, panel, o);
+      sendVoid1(panel, sel(a, "setCanChooseFiles:"), bool(!o.directory()));
+      sendVoid1(panel, sel(a, "setCanChooseDirectories:"), bool(o.directory()));
+      sendVoid1(panel, sel(a, "setAllowsMultipleSelection:"), bool(o.multiple()));
+      applyDefaultPath(a, panel, o.defaultPath(), false);
+      activateApp(a);
+      final var result = send0(panel, sel(a, "runModal"));
+      if (result.address() != 1) { // NSModalResponseOK
+        return java.util.List.of();
+      }
+      final var urls = send0(panel, sel(a, "URLs"));
+      final long count = send0(urls, sel(a, "count")).address();
+      final var out = new java.util.ArrayList<Path>();
+      for (long i = 0; i < count; i++) {
+        out.add(urlToPath(a, send1(urls, sel(a, "objectAtIndex:"), index(i))));
+      }
+      return out;
+    }
+  }
+
+  static Path saveDialog(io.avaje.webview.Dialogs.FileDialogOptions o) {
+    try (var a = Arena.ofConfined()) {
+      final var panel = send0(ObjC.getClass(a, "NSSavePanel"), sel(a, "savePanel"));
+      configurePanel(a, panel, o);
+      applyDefaultPath(a, panel, o.defaultPath(), true);
+      activateApp(a);
+      final var result = send0(panel, sel(a, "runModal"));
+      if (result.address() != 1) {
+        return null;
+      }
+      return urlToPath(a, send0(panel, sel(a, "URL")));
+    }
+  }
+
+  static int messageDialog(io.avaje.webview.Dialogs.MessageDialogOptions o) {
+    try (var a = Arena.ofConfined()) {
+      final var alert = send0(send0(ObjC.getClass(a, "NSAlert"), sel(a, "alloc")), sel(a, "init"));
+      if (o.title() != null) {
+        sendVoid1(alert, sel(a, "setMessageText:"), nsString(a, o.title()));
+      }
+      sendVoid1(alert, sel(a, "setInformativeText:"), nsString(a, o.message()));
+      // NSAlertStyleWarning = 0, NSAlertStyleInformational = 1, NSAlertStyleCritical = 2
+      final long style =
+          switch (o.kind() == null ? io.avaje.webview.Dialogs.MessageKind.INFO : o.kind()) {
+            case INFO -> 1;
+            case WARNING -> 0;
+            case ERROR -> 2;
+          };
+      sendVoid1(alert, sel(a, "setAlertStyle:"), index(style));
+      final var buttons =
+          o.buttons() == null || o.buttons().isEmpty() ? java.util.List.of("OK") : o.buttons();
+      for (var b : buttons) {
+        send1(alert, sel(a, "addButtonWithTitle:"), nsString(a, b));
+      }
+      activateApp(a);
+      final long r = send0(alert, sel(a, "runModal")).address();
+      sendVoid0(alert, sel(a, "release"));
+      return (int) Math.max(0, Math.min(buttons.size() - 1, r - 1000)); // NSAlertFirstButtonReturn
+    }
+  }
+
+  private static void activateApp(Arena a) {
+    final var app = send0(ObjC.getClass(a, "NSApplication"), sel(a, "sharedApplication"));
+    sendVoid1(app, sel(a, "activateIgnoringOtherApps:"), bool(true));
+  }
+
   static void createMenus() {
     try (var a = Arena.ofConfined()) {
       final var NSMenu = ObjC.getClass(a, "NSMenu");

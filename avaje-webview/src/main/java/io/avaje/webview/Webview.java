@@ -408,6 +408,39 @@ public interface Webview extends Closeable, Runnable {
    */
   void setIcon(URI uri);
 
+  /**
+   * Shows a native open-file (or open-directory) dialog and blocks until it is dismissed. May be
+   * called from any thread; the dialog runs on the UI thread.
+   *
+   * @return the chosen paths, empty if the user cancelled
+   * @throws UnsupportedOperationException on platforms without a native implementation (currently
+   *     only macOS has one)
+   */
+  default List<Path> showOpenDialog(Dialogs.FileDialogOptions options) {
+    throw new UnsupportedOperationException("Native dialogs are not implemented on this platform");
+  }
+
+  /**
+   * Shows a native save-file dialog and blocks until it is dismissed. May be called from any
+   * thread.
+   *
+   * @return the chosen path, or {@code null} if the user cancelled
+   * @throws UnsupportedOperationException on platforms without a native implementation
+   */
+  default Path showSaveDialog(Dialogs.FileDialogOptions options) {
+    throw new UnsupportedOperationException("Native dialogs are not implemented on this platform");
+  }
+
+  /**
+   * Shows a native message dialog and blocks until it is dismissed. May be called from any thread.
+   *
+   * @return the zero-based index of the button the user pressed
+   * @throws UnsupportedOperationException on platforms without a native implementation
+   */
+  default int showMessageDialog(Dialogs.MessageDialogOptions options) {
+    throw new UnsupportedOperationException("Native dialogs are not implemented on this platform");
+  }
+
   /** Interface for configuring and instantiating {@link Webview} instances. */
   public interface Builder {
 

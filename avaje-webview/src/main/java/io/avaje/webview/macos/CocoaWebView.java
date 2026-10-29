@@ -669,6 +669,46 @@ public final class CocoaWebView extends WebviewBase {
     dispatchImpl(() -> MacOSHelper.setIcon(path));
   }
 
+  @Override
+  public java.util.List<Path> showOpenDialog(io.avaje.webview.Dialogs.FileDialogOptions options) {
+    return onMainThread(() -> MacOSHelper.openDialog(options));
+  }
+
+  @Override
+  public Path showSaveDialog(io.avaje.webview.Dialogs.FileDialogOptions options) {
+    return onMainThread(() -> MacOSHelper.saveDialog(options));
+  }
+
+  @Override
+  public int showMessageDialog(io.avaje.webview.Dialogs.MessageDialogOptions options) {
+    return onMainThread(() -> MacOSHelper.messageDialog(options));
+  }
+
+  /** Runs {@code task} on the main thread and returns its result, blocking the caller. */
+  private <T> T onMainThread(java.util.function.Supplier<T> task) {
+    if (MacOSHelper.isMainThread()) {
+      return task.get();
+    }
+    final var result = new java.util.concurrent.CompletableFuture<T>();
+    dispatchImpl(
+        () -> {
+          try {
+            result.complete(task.get());
+          } catch (final Throwable t) {
+            result.completeExceptionally(t);
+          }
+        });
+    try {
+      return result.get();
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while waiting for a dialog", e);
+    } catch (final java.util.concurrent.ExecutionException e) {
+      if (e.getCause() instanceof RuntimeException re) throw re;
+      throw new RuntimeException(e.getCause());
+    }
+  }
+
   /** Called by libdispatch on the main thread when dispatchImpl fires. ctx is always NULL. */
   @SuppressWarnings("unused")
   public void drainDispatchQueue(MemorySegment ctx) {
