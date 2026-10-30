@@ -1,9 +1,11 @@
 package io.avaje.webview.windows;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
@@ -16,7 +18,10 @@ import java.lang.invoke.MethodType;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.BooleanSupplier;
 
@@ -124,6 +129,16 @@ public final class Win32WebView extends WebviewBase {
   private volatile ComWebView2 webView2;
 
   /**
+   * The {@code ICoreWebView2Environment}, kept because {@code CreateWebResourceResponse} lives on
+   * it and scheme handlers need it for every request. AddRef'd when it arrives, since WebView2
+   * drops its own reference once the completion callback returns.
+   */
+  private volatile MemorySegment environment = MemorySegment.NULL;
+
+  /** Scheme to handler, as registered on the builder. Empty when the feature is unused. */
+  private final java.util.Map<String, io.avaje.webview.SchemeHandler> schemeHandlers;
+
+  /**
    * Tells the init pump in {@link #embedWebView2} to stop. Set by {@code doInitTasks} or by any
    * error path along the way, and volatile because the write comes from the COM callback thread.
    */
@@ -227,13 +242,10 @@ public final class Win32WebView extends WebviewBase {
       boolean moveParentWithChild,
       java.util.Map<String, io.avaje.webview.SchemeHandler> schemeHandlers) {
     super(redirectConsole, borderless, outline, transparent, parentWindow, moveParentWithChild);
-    if (schemeHandlers != null && !schemeHandlers.isEmpty()) {
-      // See docs/scheme-handler-windows.md - needs
-      // ICoreWebView2.add_WebResourceRequested + AddWebResourceRequestedFilter(<scheme>://*, ALL).
-      throw new UnsupportedOperationException(
-          "Custom URL scheme handlers are not yet implemented for Windows/WebView2. "
-              + "See docs/scheme-handler-windows.md for the implementation plan.");
-    }
+    this.schemeHandlers =
+        schemeHandlers == null || schemeHandlers.isEmpty()
+            ? java.util.Map.of()
+            : java.util.Map.copyOf(schemeHandlers);
     Win32.coInitialize();
     Win32.enablePerMonitorDpiAwareness();
     buildWndProcStubs();
@@ -283,6 +295,10 @@ public final class Win32WebView extends WebviewBase {
     if (controller != null) {
       controller.close();
     }
+    // Balances the AddRef taken when the environment arrived; the handler stubs themselves are
+    // freed with arenaStubs once the message pump exits.
+    Win32.comRelease(environment);
+    environment = MemorySegment.NULL;
     if (hwnd != null && hwnd.address() != 0) {
       try {
         final var _ = (int) Win32.DestroyWindow.invokeExact(hwnd);
@@ -1107,6 +1123,11 @@ public final class Win32WebView extends WebviewBase {
       webviewReady = true;
       return hr;
     }
+    // Held for CreateWebResourceResponse; WebView2 releases its own reference on return.
+    if (!schemeHandlers.isEmpty()) {
+      nativeAddRef(env);
+      environment = env;
+    }
     // The same object serves as the ctrl handler: QI hands back self for whatever interface
     // WebView2 asks about, including ICoreWebView2CreateCoreWebView2ControllerCompletedHandler.
     ctrlPhase = true;
@@ -1149,6 +1170,7 @@ public final class Win32WebView extends WebviewBase {
     addWebMessageHandler();
     addPermissionHandler();
     addProcessFailedHandler();
+    addSchemeHandlers();
 
     // Settings, scripts, resize and show all need IPC, so they wait for msgWndProc to run them
     // on a stack that isn't inside a WebView2 callback.
@@ -1462,6 +1484,332 @@ public final class Win32WebView extends WebviewBase {
       throw new RuntimeException(t);
     }
   }
+
+  /// Custom URL scheme handling (ICoreWebView2::add_WebResourceRequested)
+
+  /**
+   * Registers the {@code WebResourceRequested} event and one filter per scheme.
+   *
+   * <p>Two filters go in for each scheme. The obvious one is {@code <scheme>://*}. The second,
+   * {@code https://<scheme>.localhost/*}, exists because Chromium treats unknown schemes as opaque
+   * origins: a page loaded from one gets no local storage, no fetch credentials, and fails CORS
+   * preflight against everything. Tauri works around that on Windows by rewriting {@code asset://x}
+   * to {@code https://asset.localhost/x}, and apps following the same convention would otherwise
+   * find their requests sailing past an {@code asset://*} filter untouched. Serving both shapes
+   * from the one handler keeps either style working.
+   */
+  private void addSchemeHandlers() {
+    if (schemeHandlers.isEmpty()) {
+      return;
+    }
+    try {
+      final var mh =
+          MethodHandles.lookup()
+              .findVirtual(
+                  Win32WebView.class,
+                  "onWebResourceRequested",
+                  MethodType.methodType(
+                      int.class, MemorySegment.class, MemorySegment.class, MemorySegment.class))
+              .bindTo(this);
+      final var handler =
+          buildComObject(
+              Linker.nativeLinker()
+                  .upcallStub(
+                      mh, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS), arenaStubs));
+      for (final var scheme : schemeHandlers.keySet()) {
+        webView2.addWebResourceRequestedFilter(
+            scheme + "://*", Win32.COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+        webView2.addWebResourceRequestedFilter(
+            "https://" + scheme + ".localhost/*", Win32.COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+      }
+      webView2.addWebResourceRequested(handler);
+    } catch (final ReflectiveOperationException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  /**
+   * Handles {@code ICoreWebView2WebResourceRequestedEventHandler::Invoke}. Reads the request off
+   * the event args, dispatches to the Java {@link io.avaje.webview.SchemeHandler} registered for
+   * the scheme of the URL, and sets the response.
+   *
+   * <p>Runs on the UI thread, inside the WebView2 event pump, so it must never let an exception
+   * escape into COM — that would take the process down. Anything unexpected becomes a 500.
+   */
+  @SuppressWarnings("unused")
+  public int onWebResourceRequested(MemorySegment self, MemorySegment sender, MemorySegment args) {
+    var request = MemorySegment.NULL;
+    try (var a = Arena.ofConfined()) {
+      final var pRequest = a.allocate(ADDRESS);
+      if (call(args, 3, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), args, pRequest) != 0) {
+        return 0; // no request to read; let WebView2 resolve the URL itself
+      }
+      request = pRequest.get(ADDRESS, 0);
+      if (request.address() == 0) {
+        return 0;
+      }
+
+      final var url = requestString(a, request, 3); // get_Uri
+      if (url == null) {
+        return 0;
+      }
+      final var handler = schemeHandlers.get(schemeOf(url));
+      if (handler == null) {
+        return 0; // a filter matched something we have no handler for
+      }
+
+      final var method = requestString(a, request, 5); // get_Method
+      final var req =
+          new io.avaje.webview.SchemeRequest(
+              url, method, requestHeaders(a, request), requestBody(a, request));
+
+      io.avaje.webview.SchemeResponse resp;
+      try {
+        resp = handler.handle(req);
+        if (resp == null) {
+          resp = errorResponse("SchemeHandler returned null");
+        }
+      } catch (final Throwable t) {
+        resp = errorResponse(t.getMessage() == null ? t.toString() : t.getMessage());
+      }
+      respond(a, args, resp);
+      return 0;
+    } catch (final Throwable t) {
+      return 0; // E_FAIL aborts the load outright; a passthrough at least surfaces an error page
+    } finally {
+      Win32.comRelease(request);
+    }
+  }
+
+  /** Builds the response COM object, hands it to the event args, and releases both references. */
+  private void respond(Arena a, MemorySegment args, io.avaje.webview.SchemeResponse resp) {
+    final var stream = Win32.shCreateMemStream(resp.body());
+    var response = MemorySegment.NULL;
+    try {
+      final var pResponse = a.allocate(ADDRESS);
+      final var hr =
+          call(
+              environment,
+              4, // ICoreWebView2Environment::CreateWebResourceResponse
+              FunctionDescriptor.of(
+                  JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS),
+              environment,
+              stream,
+              resp.status(),
+              a.allocateFrom(reasonPhrase(resp.status()), StandardCharsets.UTF_16LE),
+              a.allocateFrom(responseHeaders(resp), StandardCharsets.UTF_16LE),
+              pResponse);
+      if (hr != 0) {
+        return;
+      }
+      response = pResponse.get(ADDRESS, 0);
+      // put_Response AddRefs, so the reference CreateWebResourceResponse handed us is still ours.
+      call(args, 5, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), args, response);
+    } finally {
+      Win32.comRelease(response);
+      Win32.comRelease(stream);
+    }
+  }
+
+  /**
+   * The scheme a URL should be served by: its own, unless it is one of the {@code
+   * https://<scheme>.localhost} forms described on {@link #addSchemeHandlers()}.
+   */
+  private static String schemeOf(String url) {
+    final var mark = url.indexOf("://");
+    if (mark <= 0) {
+      return "";
+    }
+    final var scheme = url.substring(0, mark).toLowerCase(Locale.ROOT);
+    if (!"https".equals(scheme) && !"http".equals(scheme)) {
+      return scheme;
+    }
+    final var rest = url.substring(mark + 3);
+    final var slash = rest.indexOf(47); // '/'
+    final var host = (slash < 0 ? rest : rest.substring(0, slash)).toLowerCase(Locale.ROOT);
+    return host.endsWith(LOCALHOST_SUFFIX)
+        ? host.substring(0, host.length() - LOCALHOST_SUFFIX.length())
+        : scheme;
+  }
+
+  private static final String LOCALHOST_SUFFIX = ".localhost";
+
+  /** Reads one {@code LPWSTR} out-parameter off the request, e.g. {@code get_Uri}. */
+  private static String requestString(Arena a, MemorySegment request, int vtableIndex) {
+    final var out = a.allocate(ADDRESS);
+    if (call(request, vtableIndex, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), request, out)
+        != 0) {
+      return null;
+    }
+    return Win32.takeWideString(out.get(ADDRESS, 0));
+  }
+
+  /**
+   * Reads the request headers by walking the {@code ICoreWebView2HttpRequestHeaders} iterator.
+   * Names are lower-cased to match the {@link io.avaje.webview.SchemeRequest} contract.
+   */
+  private static Map<String, String> requestHeaders(Arena a, MemorySegment request) {
+    var headers = MemorySegment.NULL;
+    var iterator = MemorySegment.NULL;
+    final var out = new LinkedHashMap<String, String>();
+    try {
+      final var pHeaders = a.allocate(ADDRESS);
+      if (call(request, 9, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), request, pHeaders)
+          != 0) {
+        return out;
+      }
+      headers = pHeaders.get(ADDRESS, 0);
+      if (headers.address() == 0) {
+        return out;
+      }
+      final var pIterator = a.allocate(ADDRESS);
+      if (call(headers, 8, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), headers, pIterator)
+          != 0) {
+        return out;
+      }
+      iterator = pIterator.get(ADDRESS, 0);
+      if (iterator.address() == 0) {
+        return out;
+      }
+      final var flag = a.allocate(JAVA_INT);
+      final var pName = a.allocate(ADDRESS);
+      final var pValue = a.allocate(ADDRESS);
+      // get_HasCurrentHeader and MoveNext share a shape: HRESULT(This, BOOL*)
+      final var boolOut = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS);
+      final var getCurrent = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS);
+      while (call(iterator, 4, boolOut, iterator, flag) == 0 && flag.get(JAVA_INT, 0) != 0) {
+        if (call(iterator, 3, getCurrent, iterator, pName, pValue) == 0) {
+          final var name = Win32.takeWideString(pName.get(ADDRESS, 0));
+          final var value = Win32.takeWideString(pValue.get(ADDRESS, 0));
+          if (name != null) {
+            out.put(name.toLowerCase(Locale.ROOT), value == null ? "" : value);
+          }
+        }
+        if (call(iterator, 5, boolOut, iterator, flag) != 0 || flag.get(JAVA_INT, 0) == 0) {
+          break;
+        }
+      }
+      return out;
+    } catch (final Throwable t) {
+      return out; // headers are a nicety; the request still serves without them
+    } finally {
+      Win32.comRelease(iterator);
+      Win32.comRelease(headers);
+    }
+  }
+
+  /** Drains the request body {@code IStream}, which is null for a body-less request. */
+  private static byte[] requestBody(Arena a, MemorySegment request) {
+    var content = MemorySegment.NULL;
+    try {
+      final var pContent = a.allocate(ADDRESS);
+      if (call(request, 7, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS), request, pContent)
+          != 0) {
+        return EMPTY_BODY;
+      }
+      content = pContent.get(ADDRESS, 0);
+      if (content.address() == 0) {
+        return EMPTY_BODY;
+      }
+      final var chunk = a.allocate(BODY_CHUNK_BYTES);
+      final var read = a.allocate(JAVA_INT);
+      final var readFd = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS);
+      final var buffer = new ByteArrayOutputStream();
+      while (buffer.size() < MAX_BODY_BYTES) {
+        final var hr = call(content, 3, readFd, content, chunk, (int) BODY_CHUNK_BYTES, read);
+        final var n = read.get(JAVA_INT, 0);
+        if (hr < 0 || n <= 0) {
+          break;
+        }
+        buffer.write(chunk.asSlice(0, n).toArray(JAVA_BYTE), 0, n);
+      }
+      return buffer.toByteArray();
+    } catch (final Throwable t) {
+      return EMPTY_BODY;
+    } finally {
+      Win32.comRelease(content);
+    }
+  }
+
+  private static final byte[] EMPTY_BODY = new byte[0];
+
+  private static final long BODY_CHUNK_BYTES = 8192;
+
+  /** Ceiling on a buffered request body, so a runaway upload cannot exhaust the heap. */
+  private static final int MAX_BODY_BYTES = 32 * 1024 * 1024;
+
+  /**
+   * Renders response headers the way {@code CreateWebResourceResponse} wants them: one {@code
+   * Name: value} per line. {@code Content-Length} is deliberately left out — WebView2 takes it from
+   * the stream, and a value that disagreed with it would truncate the body.
+   */
+  private static String responseHeaders(io.avaje.webview.SchemeResponse resp) {
+    final var sb = new StringBuilder();
+    if (resp.contentType() != null) {
+      sb.append("Content-Type: ").append(resp.contentType()).append('\n');
+    }
+    if (resp.headers() != null) {
+      for (final var h : resp.headers().entrySet()) {
+        if (h.getKey() != null && h.getValue() != null) {
+          sb.append(h.getKey()).append(": ").append(h.getValue()).append('\n');
+        }
+      }
+    }
+    return sb.toString();
+  }
+
+  /**
+   * The 500 a thrown handler turns into. It carries {@code Access-Control-Allow-Origin} because
+   * the page is cross-origin to the scheme it is fetching: without it the browser rejects the
+   * response before JavaScript can read the status, and the documented "exceptions surface as a
+   * 500" behaviour would show up as an opaque network error instead.
+   */
+  private static io.avaje.webview.SchemeResponse errorResponse(String message) {
+    return io.avaje.webview.SchemeResponse.builder()
+        .status(500)
+        .contentType("text/plain; charset=utf-8")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(String.valueOf(message).getBytes(StandardCharsets.UTF_8))
+        .build();
+  }
+
+  /** Status text for the handful of codes a scheme handler realistically returns. */
+  private static String reasonPhrase(int status) {
+    return switch (status) {
+      case 200 -> "OK";
+      case 204 -> "No Content";
+      case 206 -> "Partial Content";
+      case 301 -> "Moved Permanently";
+      case 302 -> "Found";
+      case 304 -> "Not Modified";
+      case 400 -> "Bad Request";
+      case 401 -> "Unauthorized";
+      case 403 -> "Forbidden";
+      case 404 -> "Not Found";
+      case 405 -> "Method Not Allowed";
+      case 416 -> "Range Not Satisfiable";
+      case 500 -> "Internal Server Error";
+      default -> status >= 200 && status < 300 ? "OK" : "Error";
+    };
+  }
+
+  /**
+   * Invokes a COM vtable slot. Returns the HRESULT, or {@code E_FAIL} if the call could not be
+   * made at all, so callers can treat the two the same way.
+   */
+  private static int call(
+      MemorySegment comObj, int vtableIndex, FunctionDescriptor fd, Object... callArgs) {
+    if (comObj == null || comObj.address() == 0) {
+      return E_FAIL;
+    }
+    try {
+      return (int) Win32.resolve(comObj, vtableIndex, fd).invokeWithArguments(callArgs);
+    } catch (final Throwable t) {
+      return E_FAIL;
+    }
+  }
+
+  private static final int E_FAIL = 0x80004005;
 
   /**
    * Builds a minimal COM object in {@link #arenaStubs} over a 4-slot vtable: {@code

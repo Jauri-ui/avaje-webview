@@ -35,6 +35,157 @@ class WebviewIntegrationTest {
   }
 
   // -------------------------------------------------------------------------
+  // Custom URL scheme handlers
+  // -------------------------------------------------------------------------
+
+  /**
+   * Serves a scheme from Java and checks the response reaches the page intact, along with the
+   * request details reaching the handler.
+   *
+   * <p>The fetches go to {@code https://<scheme>.localhost} rather than {@code <scheme>://},
+   * because Chromium will not fetch() a non-special scheme however the embedder intercepts it; the
+   * backend registers both shapes against the same handler for exactly that reason. The {@code
+   * <img>} load below covers the bare scheme.
+   */
+  @Test
+  void schemeHandlerServesResponsesAndSeesRequestDetails() {
+    final var failure = new AtomicReference<Throwable>();
+    final var called = new AtomicBoolean(false);
+    final var seenMethod = new AtomicReference<String>("");
+    final var seenProbe = new AtomicReference<String>("");
+    final var seenBody = new AtomicReference<String>("");
+
+    final var page =
+        """
+        <script>
+        async function run() {
+          const H = 'https://probe.localhost';
+          const results = [];
+          const ok = await fetch(H + '/hello.txt');
+          results.push(ok.status);
+          results.push(await ok.text());
+          results.push(ok.headers.get('content-type'));
+          const posted = await fetch(H + '/echo', {method: 'POST', headers: {'X-Probe': 'abc'}, body: 'ping'});
+          results.push(posted.status);
+          const denied = await fetch(H + '/deny');
+          results.push(denied.status);
+          const threw = await fetch(H + '/boom');
+          results.push(threw.status);
+          window.check(JSON.stringify(results));
+        }
+        run();
+        </script>
+        """;
+
+    try (var w =
+        Webview.builder()
+            .registerSchemeHandler(
+                "probe",
+                req -> {
+                  final var cors =
+                      SchemeResponse.builder().header("Access-Control-Allow-Origin", "*")
+                          .header("Access-Control-Allow-Headers", "*");
+                  if (req.url().endsWith("/deny")) {
+                    return cors.status(403).contentType("text/plain").body("no").build();
+                  }
+                  if (req.url().endsWith("/boom")) {
+                    throw new IllegalStateException("handler blew up");
+                  }
+                  if (req.url().endsWith("/echo")) {
+                    seenMethod.set(req.method());
+                    seenProbe.set(req.headers().getOrDefault("x-probe", ""));
+                    seenBody.set(new String(req.body(), StandardCharsets.UTF_8));
+                    return cors.status(200).contentType("text/plain").body("echoed").build();
+                  }
+                  return cors
+                      .status(200)
+                      .contentType("text/plain; charset=utf-8")
+                      .body("served-from-java")
+                      .build();
+                })
+            .html(page)
+            .build()) {
+      w.bind(
+          "check",
+          req -> {
+            try {
+              // ["[200,\"served-from-java\",\"text/plain; charset=utf-8\",200,403,500]"]
+              assertTrue(req.contains("200"), req);
+              assertTrue(req.contains("served-from-java"), req);
+              assertTrue(req.contains("text/plain; charset=utf-8"), req);
+              assertTrue(req.contains("403"), req);
+              assertTrue(req.contains("500"), req); // a thrown handler becomes a 500
+              assertEquals("POST", seenMethod.get());
+              assertEquals("abc", seenProbe.get());
+              assertEquals("ping", seenBody.get());
+              called.set(true);
+            } catch (final Throwable t) {
+              failure.set(t);
+            } finally {
+              w.dispatch(w::close);
+            }
+            return "null";
+          });
+      w.run();
+    }
+    rethrow(failure);
+    assertTrue(called.get(), "check binding was never invoked");
+  }
+
+  /** A subresource load over the bare {@code <scheme>://} form reaches the handler. */
+  @Test
+  void schemeHandlerServesASubresourceOverTheBareScheme() {
+    final var failure = new AtomicReference<Throwable>();
+    final var called = new AtomicBoolean(false);
+    final var requested = new AtomicReference<String>("");
+
+    // 1x1 transparent PNG
+    final var png =
+        java.util.Base64.getDecoder()
+            .decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+
+    final var page =
+        """
+        <script>
+        const img = new Image();
+        img.onload = () => window.check('loaded');
+        img.onerror = () => window.check('failed');
+        img.src = 'pix://host/dot.png';
+        </script>
+        """;
+
+    try (var w =
+        Webview.builder()
+            .registerSchemeHandler(
+                "pix",
+                req -> {
+                  requested.set(req.url());
+                  return SchemeResponse.builder().status(200).contentType("image/png").body(png).build();
+                })
+            .html(page)
+            .build()) {
+      w.bind(
+          "check",
+          req -> {
+            try {
+              assertEquals("[\"loaded\"]", req);
+              assertTrue(requested.get().startsWith("pix://"), requested.get());
+              called.set(true);
+            } catch (final Throwable t) {
+              failure.set(t);
+            } finally {
+              w.dispatch(w::close);
+            }
+            return "null";
+          });
+      w.run();
+    }
+    rethrow(failure);
+    assertTrue(called.get(), "check binding was never invoked");
+  }
+
+  // -------------------------------------------------------------------------
   // Lifecycle
   // -------------------------------------------------------------------------
 

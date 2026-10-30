@@ -24,6 +24,8 @@ final class ComWebView2 {
   private final MethodHandle addScriptOnDoc;
   private final MethodHandle removeScript;
   private final MethodHandle executeScript;
+  private final MethodHandle addWebResourceReq;
+  private final MethodHandle addWebResourceFilter;
 
   /**
    * Binds all vtable method handles eagerly from the given {@code ICoreWebView2} COM pointer.
@@ -52,6 +54,10 @@ final class ComWebView2 {
         Win32.resolve(ptr, 29, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
     addWebMessageRcvd =
         Win32.resolve(ptr, 34, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+    addWebResourceReq =
+        Win32.resolve(ptr, 55, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+    addWebResourceFilter =
+        Win32.resolve(ptr, 57, FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
   }
 
   /**
@@ -107,6 +113,44 @@ final class ComWebView2 {
     try (var a = Arena.ofConfined()) {
       final var pToken = a.allocate(JAVA_LONG);
       final var _ = (int) addWebMessageRcvd.invokeExact(ptr, handler, pToken);
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Calls {@code ICoreWebView2::add_WebResourceRequested}, the event that lets a custom scheme be
+   * served from Java. Only URLs matching a filter added by {@link
+   * #addWebResourceRequestedFilter(String, int)} raise it.
+   *
+   * @param handler COM object implementing {@code
+   *     ICoreWebView2WebResourceRequestedEventHandler}
+   * @return the EventRegistrationToken, or 0 if the call failed
+   */
+  long addWebResourceRequested(MemorySegment handler) {
+    try (var a = Arena.ofConfined()) {
+      final var pToken = a.allocate(JAVA_LONG);
+      final var hr = (int) addWebResourceReq.invokeExact(ptr, handler, pToken);
+      return hr == 0 ? pToken.get(JAVA_LONG, 0) : 0;
+    } catch (final Throwable t) {
+      throw new RuntimeException(t);
+    }
+  }
+
+  /**
+   * Calls {@code ICoreWebView2::AddWebResourceRequestedFilter}. Without at least one filter the
+   * {@code WebResourceRequested} event never fires.
+   *
+   * @param uri URI pattern, where {@code *} matches any run of characters, e.g. {@code
+   *     "asset://*"}; encoded as UTF-16LE before passing to COM
+   * @param resourceContext {@code COREWEBVIEW2_WEB_RESOURCE_CONTEXT} value; 0 is {@code ALL}
+   * @return HRESULT from the COM call
+   */
+  int addWebResourceRequestedFilter(String uri, int resourceContext) {
+    try (var a = Arena.ofConfined()) {
+      return (int)
+          addWebResourceFilter.invokeExact(
+              ptr, a.allocateFrom(uri, StandardCharsets.UTF_16LE), resourceContext);
     } catch (final Throwable t) {
       throw new RuntimeException(t);
     }

@@ -1,6 +1,7 @@
 package io.avaje.webview.windows;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 import static java.lang.foreign.ValueLayout.JAVA_SHORT;
@@ -38,6 +39,8 @@ final class Win32 {
   private static final SymbolLookup ADVAPI32 =
       SymbolLookup.libraryLookup("advapi32", Arena.global());
   private static final SymbolLookup OLE32 = SymbolLookup.libraryLookup("ole32", Arena.global());
+  private static final SymbolLookup SHLWAPI =
+      SymbolLookup.libraryLookup("shlwapi", Arena.global());
 
   // Window style / message constants
   static final int WS_EX_APPWINDOW = 0x00040000;
@@ -102,6 +105,8 @@ final class Win32 {
   static final int COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ = 9;
   // COREWEBVIEW2_PERMISSION_STATE_ALLOW = 1
   static final int COREWEBVIEW2_PERMISSION_STATE_ALLOW = 1;
+  // COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL = 0 - every resource kind, not just documents
+  static final int COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL = 0;
 
   /// Struct layouts
 
@@ -527,6 +532,17 @@ final class Win32 {
    */
   static final MethodHandle CoTaskMemFree =
       downcall(OLE32, "CoTaskMemFree", FunctionDescriptor.ofVoid(ADDRESS));
+
+  /**
+   * {@code SHCreateMemStream(pInit, cbInit) -> IStream*}
+   *
+   * <p>Wraps a byte buffer in an {@code IStream} that COM owns, copying the bytes, so the caller's
+   * buffer can go away immediately. Used to hand scheme-handler response bodies to {@code
+   * ICoreWebView2Environment::CreateWebResourceResponse}. Release the returned stream with {@code
+   * IUnknown::Release}.
+   */
+  static final MethodHandle SHCreateMemStream =
+      downcall(SHLWAPI, "SHCreateMemStream", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT));
 
   private static MethodHandle downcall(SymbolLookup lib, String sym, FunctionDescriptor desc) {
     return LINKER.downcallHandle(
@@ -1100,6 +1116,66 @@ final class Win32 {
       CoTaskMemFree.invokeExact(ptr);
     } catch (final Throwable t) {
       /* best effort */
+    }
+  }
+
+  /**
+   * Copies {@code bytes} into a COM-owned {@code IStream}.
+   *
+   * @return the stream, to be released by the caller, or {@link MemorySegment#NULL} for an empty
+   *     body — {@code CreateWebResourceResponse} accepts a null stream as "no content"
+   */
+  static MemorySegment shCreateMemStream(byte[] bytes) {
+    if (bytes == null || bytes.length == 0) {
+      return MemorySegment.NULL;
+    }
+    try (var a = Arena.ofConfined()) {
+      final var buf = a.allocate(bytes.length);
+      MemorySegment.copy(bytes, 0, buf, JAVA_BYTE, 0, bytes.length);
+      return (MemorySegment) SHCreateMemStream.invokeExact(buf, bytes.length);
+    } catch (final Throwable t) {
+      return MemorySegment.NULL;
+    }
+  }
+
+  /**
+   * Reads a NUL-terminated UTF-16LE string out of COM-allocated memory and frees it with {@code
+   * CoTaskMemFree}, which is what the {@code LPWSTR} out-parameters of WebView2 require.
+   *
+   * @return the string, or {@code null} if {@code ptr} is null
+   */
+  static String takeWideString(MemorySegment ptr) {
+    if (ptr == null || ptr.address() == 0) {
+      return null;
+    }
+    try {
+      return ptr.reinterpret(MAX_WIDE_STRING_BYTES).getString(0, StandardCharsets.UTF_16LE);
+    } catch (final RuntimeException e) {
+      return null;
+    } finally {
+      coTaskMemFree(ptr);
+    }
+  }
+
+  /**
+   * Upper bound used when reinterpreting a {@code LPWSTR} whose length COM does not tell us. The
+   * string is NUL-terminated well inside this for the URLs, methods and header values WebView2
+   * hands back.
+   */
+  private static final long MAX_WIDE_STRING_BYTES = 65536;
+
+  /** Calls {@code IUnknown::Release} on a native COM object. Best effort. */
+  static void comRelease(MemorySegment comObj) {
+    if (comObj == null || comObj.address() == 0) {
+      return;
+    }
+    try {
+      final var release =
+          Linker.nativeLinker()
+              .downcallHandle(vtableFn(comObj, 2), FunctionDescriptor.of(JAVA_INT, ADDRESS));
+      final var _ = (int) release.invokeExact(comObj);
+    } catch (final Throwable ignored) {
+      // the object outlives us either way; nothing useful to do with a failed release
     }
   }
 

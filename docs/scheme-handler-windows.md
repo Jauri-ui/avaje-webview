@@ -1,5 +1,10 @@
 # Implementing custom URL scheme handlers on Windows (WebView2)
 
+> **Implemented 2026-10-30.** `Win32WebView` serves registered schemes through
+> `ICoreWebView2::add_WebResourceRequested`; `WebviewIntegrationTest` covers it with two real
+> WebView2 tests. What follows is kept as the design record, with the corrections found while
+> building it marked inline. Read the **Outcome** section at the bottom first.
+
 You (a Claude sister on Windows) are picking up an in-flight feature. macOS is already implemented and merged on this branch; your job is the WebView2 backend. This doc gives you everything you need — API surface, code sites to edit, WebView2 calls to make, verification steps, gotchas.
 
 ## What already exists
@@ -55,7 +60,7 @@ If you don't set a response, WebView2 tries to resolve the URL itself and (for a
 All under `avaje-webview/src/main/java/io/avaje/webview/windows/`.
 
 1. **`Win32WebView.java`** — the constructor throw at ~line 218 goes away, replaced by "store the map, register schemes after the controller is ready." The event subscription happens after WebView2 environment + controller + view are constructed (there's an existing `embedWebView2(debug)` call — hook in after that).
-2. **`ComWebView2.java`** — add vtable bindings for `add_WebResourceRequested` and `AddWebResourceRequestedFilter`. Grep the file for `add_WebMessageReceived` to see the pattern: `Win32.downcallVtable(comObj, idx, FunctionDescriptor)` + a Java wrapper method. Vtable indices for `ICoreWebView2` (from the WebView2 SDK header): `add_WebResourceRequested` = **20**, `AddWebResourceRequestedFilter` = **22**. Double-check against `WebView2.h` in the WebView2 SDK before shipping — the numbering has shifted between SDK versions.
+2. **`ComWebView2.java`** — add vtable bindings for `add_WebResourceRequested` and `AddWebResourceRequestedFilter`. Grep the file for `add_WebMessageReceived` to see the pattern: `Win32.downcallVtable(comObj, idx, FunctionDescriptor)` + a Java wrapper method. Vtable indices for `ICoreWebView2` (checked against `WebView2.h` from the 1.0.4314.35 SDK): `add_WebResourceRequested` = **55**, `AddWebResourceRequestedFilter` = **57**. (This doc originally said 20 and 22, which was wrong — every index the working code already used, 15/23/25/27/34, lines up with the header enumeration, so 55/57 are right. A wrong index here calls an unrelated function pointer and crashes the process, so verify against the header rather than trusting a written-down number.)
 3. **New file `SchemeHandlerBridge.java`** (recommended, mirroring the shape of `CocoaWebView`'s `createSchemeHandler`) — synthesises the COM callback object. Reuse the existing `qiStub()` / `addRefStub()` / `releaseStub()` in `Win32WebView.java` (see line ~1412) as the model. Your callback has one non-IUnknown vtable slot: `Invoke(sender, args)`.
 4. **`Win32.java`** — add `SHCreateMemStream` downcall (from `shlwapi.dll`). Signature: `IStream* SHCreateMemStream(const BYTE* pInit, UINT cbInit)`. Free with `IStream::Release()`.
 
@@ -229,3 +234,60 @@ Reason phrases: `200 → "OK"`, `404 → "Not Found"`, `500 → "Internal Server
 - Push a commit onto `feat/scheme-handlers`. Do NOT open a separate PR — the macOS work is the umbrella PR; your commit lands on top of it.
 
 Ping the macOS Claude in the PR description with the WebView2 SDK version you built against.
+
+## Outcome (2026-10-30)
+
+Implemented and verified on Windows 11 with WebView2 runtime 156.0.4314.50.
+
+**What was built**, all in `io.avaje.webview.windows`:
+
+- `Win32WebView.addSchemeHandlers()` registers one `add_WebResourceRequested` callback and, per
+  scheme, two filters (see below). Hooked in next to the other `add*Handler()` calls once the
+  controller exists.
+- `Win32WebView.onWebResourceRequested(...)` reads the URL, method, request headers and body,
+  dispatches to the Java `SchemeHandler`, and sets the response. Helpers alongside it cover
+  header iteration, body draining, the response header string and status reason phrases.
+- `ComWebView2.addWebResourceRequested` / `addWebResourceRequestedFilter` bind the two vtable
+  slots; `Win32.shCreateMemStream`, `Win32.takeWideString` and `Win32.comRelease` are the new
+  primitives underneath.
+- The `ICoreWebView2Environment` pointer is now retained (AddRef'd on arrival, released in
+  `doClose`) because `CreateWebResourceResponse` lives on it.
+
+**Corrections to the plan above:**
+
+1. The vtable indices were wrong — 55 and 57, not 20 and 22. See the note inline.
+2. `CreateWebResourceResponse` is index **4** on `ICoreWebView2Environment`; `get_Request` is 3
+   and `put_Response` is 5 on the event args; `get_Uri`/`get_Method`/`get_Content`/`get_Headers`
+   are 3/5/7/9 on the request.
+3. Request headers turned out to be easy rather than "non-trivial COM" — `GetIterator` (8) then
+   `get_HasCurrentHeader` (4) / `GetCurrentHeader` (3) / `MoveNext` (5) — so they are implemented,
+   as is the POST body via `IStream::Read` (3). Windows is now the only backend that fills them
+   in: macOS and WebKitGTK both pass an empty header map and body.
+4. A handler that throws returns a 500 **carrying `Access-Control-Allow-Origin: *`**. Without it
+   the browser rejects the response before JavaScript can read the status, so the documented
+   "exceptions surface as a 500" behaviour showed up as an opaque network error instead.
+
+**The two filters, and why.** Chromium treats an unknown scheme as an opaque origin, which means
+`fetch()` and frame navigations to `test://…` are refused *before* the embedder is consulted —
+registering the filter does not help, and the smoke test confirmed a frame navigation never
+reaches the handler at all. Tauri hits the same wall and works around it on Windows by having
+`convertFileSrc` emit `https://asset.localhost/<path>`. So each registered scheme gets filters for
+both `<scheme>://*` and `https://<scheme>.localhost/*`, dispatched to the same handler.
+
+What that buys, measured:
+
+| Load | `<scheme>://` | `https://<scheme>.localhost/` |
+|---|---|---|
+| `<img>`, and subresources generally | works | works |
+| `fetch()` / XHR | **refused by Chromium** | works |
+| iframe / top-level navigation | **refused by Chromium** | works |
+
+This is a Chromium property, not something the backend can fix: an app that needs `fetch()` or
+navigation on Windows must use the `https://<scheme>.localhost` form, exactly as Tauri does.
+
+**Tests.** `WebviewIntegrationTest.schemeHandlerServesResponsesAndSeesRequestDetails` covers
+status, content type, body, a custom response header, a request header, POST method and body, a
+403, and a thrown handler becoming a 500.
+`WebviewIntegrationTest.schemeHandlerServesASubresourceOverTheBareScheme` covers an `<img>` over
+the bare scheme. Both run in a real WebView2 and are not OS-gated — they exercise whichever
+backend the platform provides.
