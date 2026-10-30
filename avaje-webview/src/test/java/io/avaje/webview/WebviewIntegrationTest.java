@@ -5,8 +5,15 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.SymbolLookup;
+import java.lang.foreign.ValueLayout;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -32,6 +39,162 @@ class WebviewIntegrationTest {
     if (t != null) {
       throw new RuntimeException(t);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Native dialogs (Windows)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Drives the Win32 dialogs without a human. A task dialog can be clicked with {@code
+   * TDM_CLICK_BUTTON} and the shell file dialogs with {@code IDOK} or {@code WM_CLOSE}, so the
+   * window is found by its title and sent the message a user would otherwise produce.
+   */
+  private static void whenDialogShown(String title, int message, long wparam, List<String> log) {
+    Thread.ofPlatform()
+        .daemon()
+        .start(
+            () -> {
+              try (var a = Arena.ofConfined()) {
+                final var user32 = SymbolLookup.libraryLookup("user32", Arena.global());
+                final var find =
+                    Linker.nativeLinker()
+                        .downcallHandle(
+                            user32.find("FindWindowW").orElseThrow(),
+                            FunctionDescriptor.of(
+                                ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+                final var send =
+                    Linker.nativeLinker()
+                        .downcallHandle(
+                            user32.find("SendMessageW").orElseThrow(),
+                            FunctionDescriptor.of(
+                                ValueLayout.JAVA_LONG,
+                                ValueLayout.ADDRESS,
+                                ValueLayout.JAVA_INT,
+                                ValueLayout.JAVA_LONG,
+                                ValueLayout.JAVA_LONG));
+                final var wide = a.allocateFrom(title, StandardCharsets.UTF_16LE);
+                final var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+                var hwnd = MemorySegment.NULL;
+                while (System.nanoTime() < deadline) {
+                  hwnd = (MemorySegment) find.invokeExact(MemorySegment.NULL, wide);
+                  if (hwnd.address() != 0) {
+                    break;
+                  }
+                  Thread.sleep(50);
+                }
+                if (hwnd.address() == 0) {
+                  log.add("no dialog window titled " + title);
+                  return;
+                }
+                Thread.sleep(300); // let it finish painting before poking it
+                final var _ = (long) send.invokeExact(hwnd, message, wparam, 0L);
+              } catch (final Throwable t) {
+                log.add("driver for " + title + ": " + t);
+              }
+            });
+  }
+
+  private static final int WM_COMMAND = 0x0111;
+  private static final int WM_CLOSE = 0x0010;
+  private static final int TDM_CLICK_BUTTON = 0x0400 + 102;
+  private static final int IDOK = 1;
+  /** Matches the first custom button id Win32Dialogs assigns. */
+  private static final int FIRST_BUTTON_ID = 1000;
+
+  @Test
+  @EnabledOnOs(OS.WINDOWS)
+  void messageDialogReturnsThePressedButtonIndexOnWindows() throws Exception {
+    final var log = new ArrayList<String>();
+    final var pressed = new AtomicInteger(-1);
+    final var dismissed = new AtomicInteger(-1);
+
+    try (var w = Webview.builder().title("dialog host").build()) {
+      final var worker =
+          Thread.ofPlatform()
+              .start(
+                  () -> {
+                    try {
+                      whenDialogShown("pick", TDM_CLICK_BUTTON, FIRST_BUTTON_ID + 1, log);
+                      pressed.set(
+                          w.showMessageDialog(
+                              new Dialogs.MessageDialogOptions(
+                                  "pick",
+                                  "choose the middle one",
+                                  Dialogs.MessageKind.INFO,
+                                  List.of("first", "second", "third"))));
+
+                      // Dismissing without choosing answers the last button, as on GTK.
+                      whenDialogShown("drop", WM_CLOSE, 0, log);
+                      dismissed.set(
+                          w.showMessageDialog(
+                              new Dialogs.MessageDialogOptions(
+                                  "drop",
+                                  "dismiss me",
+                                  Dialogs.MessageKind.WARNING,
+                                  List.of("a", "b", "c"))));
+                    } finally {
+                      w.dispatch(w::close);
+                    }
+                  });
+      w.run();
+      worker.join(5000);
+    }
+    assertTrue(log.isEmpty(), () -> "dialog driver problems: " + log);
+    assertEquals(1, pressed.get());
+    assertEquals(2, dismissed.get());
+  }
+
+  @Test
+  @EnabledOnOs(OS.WINDOWS)
+  void fileDialogsReturnSelectionsAndCancellationOnWindows() throws Exception {
+    final var log = new ArrayList<String>();
+    final var dir = Files.createTempDirectory("avaje-dlg");
+    final var file = Files.writeString(dir.resolve("pick-me.txt"), "x");
+    final var opened = new AtomicReference<List<Path>>();
+    final var cancelled = new AtomicReference<List<Path>>();
+    final var saved = new AtomicReference<Path>();
+
+    try (var w = Webview.builder().title("dialog host").build()) {
+      final var worker =
+          Thread.ofPlatform()
+              .start(
+                  () -> {
+                    try {
+                      whenDialogShown("open-one", WM_COMMAND, IDOK, log);
+                      opened.set(
+                          w.showOpenDialog(
+                              new Dialogs.FileDialogOptions(
+                                  "open-one",
+                                  file,
+                                  List.of(new Dialogs.Filter("Text", List.of("txt"))),
+                                  false,
+                                  false,
+                                  false)));
+
+                      whenDialogShown("open-none", WM_CLOSE, 0, log);
+                      cancelled.set(
+                          w.showOpenDialog(
+                              new Dialogs.FileDialogOptions(
+                                  "open-none", dir, List.of(), false, false, false)));
+
+                      final var target = dir.resolve("saved.txt");
+                      whenDialogShown("save-one", WM_COMMAND, IDOK, log);
+                      saved.set(
+                          w.showSaveDialog(
+                              new Dialogs.FileDialogOptions(
+                                  "save-one", target, List.of(), false, false, false)));
+                    } finally {
+                      w.dispatch(w::close);
+                    }
+                  });
+      w.run();
+      worker.join(5000);
+    }
+    assertTrue(log.isEmpty(), () -> "dialog driver problems: " + log);
+    assertEquals(List.of(file), opened.get());
+    assertEquals(List.of(), cancelled.get());
+    assertEquals(dir.resolve("saved.txt"), saved.get());
   }
 
   // -------------------------------------------------------------------------

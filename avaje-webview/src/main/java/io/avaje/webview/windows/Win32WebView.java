@@ -139,6 +139,12 @@ public final class Win32WebView extends WebviewBase {
   private final java.util.Map<String, io.avaje.webview.SchemeHandler> schemeHandlers;
 
   /**
+   * The thread that built the webview, which owns its windows and runs the message pump. Modal
+   * dialogs have to be shown on it.
+   */
+  private final Thread uiThread = Thread.currentThread();
+
+  /**
    * Tells the init pump in {@link #embedWebView2} to stop. Set by {@code doInitTasks} or by any
    * error path along the way, and volatile because the write comes from the COM callback thread.
    */
@@ -267,6 +273,59 @@ public final class Win32WebView extends WebviewBase {
       } catch (final Throwable t) {
         throw new RuntimeException(t);
       }
+    }
+  }
+
+  /// Native dialogs
+
+  @Override
+  public java.util.List<Path> showOpenDialog(io.avaje.webview.Dialogs.FileDialogOptions options) {
+    return onUiThread(() -> Win32Dialogs.open(dialogParent(), options));
+  }
+
+  @Override
+  public Path showSaveDialog(io.avaje.webview.Dialogs.FileDialogOptions options) {
+    return onUiThread(() -> Win32Dialogs.save(dialogParent(), options));
+  }
+
+  @Override
+  public int showMessageDialog(io.avaje.webview.Dialogs.MessageDialogOptions options) {
+    return onUiThread(() -> Win32Dialogs.message(dialogParent(), options));
+  }
+
+  /** The window a dialog is modal to, or null once the webview window is gone. */
+  private MemorySegment dialogParent() {
+    return hwnd == null || windowDestroyed ? MemorySegment.NULL : hwnd;
+  }
+
+  /**
+   * Runs {@code task} on the UI thread and blocks the caller for its result, so a dialog can be
+   * requested from any thread. The Win32 dialogs are modal and pump their own message loop, so
+   * when the call is already on the UI thread it just runs inline.
+   */
+  private <T> T onUiThread(java.util.function.Supplier<T> task) {
+    if (Thread.currentThread() == uiThread) {
+      return task.get();
+    }
+    final var result = new java.util.concurrent.CompletableFuture<T>();
+    dispatchImpl(
+        () -> {
+          try {
+            result.complete(task.get());
+          } catch (final Throwable t) {
+            result.completeExceptionally(t);
+          }
+        });
+    try {
+      return result.get();
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Interrupted while waiting for a dialog", e);
+    } catch (final java.util.concurrent.ExecutionException e) {
+      if (e.getCause() instanceof final RuntimeException re) {
+        throw re;
+      }
+      throw new RuntimeException(e.getCause());
     }
   }
 

@@ -41,6 +41,9 @@ final class Win32 {
   private static final SymbolLookup OLE32 = SymbolLookup.libraryLookup("ole32", Arena.global());
   private static final SymbolLookup SHLWAPI =
       SymbolLookup.libraryLookup("shlwapi", Arena.global());
+  private static final SymbolLookup SHELL32 = SymbolLookup.libraryLookup("shell32", Arena.global());
+  private static final SymbolLookup COMCTL32 =
+      SymbolLookup.libraryLookup("comctl32", Arena.global());
 
   // Window style / message constants
   static final int WS_EX_APPWINDOW = 0x00040000;
@@ -543,6 +546,50 @@ final class Win32 {
    */
   static final MethodHandle SHCreateMemStream =
       downcall(SHLWAPI, "SHCreateMemStream", FunctionDescriptor.of(ADDRESS, ADDRESS, JAVA_INT));
+
+  /**
+   * {@code CoCreateInstance(rclsid, pUnkOuter, dwClsContext, riid, ppv) -> HRESULT}
+   *
+   * <p>Creates the shell dialog COM objects ({@code CLSID_FileOpenDialog} /
+   * {@code CLSID_FileSaveDialog}).
+   */
+  static final MethodHandle CoCreateInstance =
+      downcall(
+          OLE32,
+          "CoCreateInstance",
+          FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS));
+
+  /** {@code CLSCTX_INPROC_SERVER} — the shell dialogs live in-process. */
+  static final int CLSCTX_INPROC_SERVER = 1;
+
+  /**
+   * {@code SHCreateItemFromParsingName(pszPath, pbc, riid, ppv) -> HRESULT}
+   *
+   * <p>Turns a filesystem path into the {@code IShellItem} that {@code IFileDialog::SetFolder}
+   * wants.
+   */
+  static final MethodHandle SHCreateItemFromParsingName =
+      downcall(
+          SHELL32,
+          "SHCreateItemFromParsingName",
+          FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+
+  /**
+   * {@code TaskDialogIndirect(pTaskConfig, pnButton, pnRadioButton, pfVerificationFlagChecked) ->
+   * HRESULT}
+   *
+   * <p>The only Win32 message box that takes custom button labels. It lives in comctl32 v6, which
+   * normally needs a manifest; the JVM already loads a comctl32 that exports it, verified by
+   * calling it with a null config and getting {@code E_INVALIDARG} rather than a link error.
+   */
+  static final MethodHandle TaskDialogIndirect =
+      downcall(
+          COMCTL32,
+          "TaskDialogIndirect",
+          FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+
+  /** {@code HRESULT_FROM_WIN32(ERROR_CANCELLED)} — what a dismissed shell dialog returns. */
+  static final int HRESULT_ERROR_CANCELLED = 0x800704C7;
 
   private static MethodHandle downcall(SymbolLookup lib, String sym, FunctionDescriptor desc) {
     return LINKER.downcallHandle(
